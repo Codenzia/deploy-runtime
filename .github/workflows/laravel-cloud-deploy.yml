@@ -72,17 +72,14 @@ on:
         required: false
         type: boolean
         default: false
-    secrets:
-      CODENZIA_PAT:
-        required: true
-      HOST_HOSTNAME:
-        required: true
-      HOST_USER:
-        required: true
-      HOST_PORT:
-        required: true
-      HOST_SSH_KEY:
-        required: true
+    # No explicit `secrets:` block. Callers MUST pass `secrets: inherit`,
+    # which forwards the caller's full secret context (org + repo + env)
+    # into this reusable workflow. Declaring required: true here causes
+    # a known GitHub validator error with `secrets: inherit` on cross-repo
+    # reusable workflows: it can't resolve inheritance at validation time.
+    # Required secrets used below: CODENZIA_PAT, HOST_HOSTNAME, HOST_USER,
+    # HOST_PORT, HOST_SSH_KEY. If any are missing at runtime, the relevant
+    # step (clone, ssh-agent, ssh-keyscan) will fail with a clear error.
 
 jobs:
   deploy:
