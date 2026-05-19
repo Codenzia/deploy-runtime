@@ -32,8 +32,11 @@ on:
           Example:
             Codenzia/Platform                 platform
             Codenzia/filament-panel-base-dev  filament-panel-base
-        required: true
+          Defaults to empty — apps that don't use Composer path repositories
+          can omit this input entirely; the clone step then becomes a no-op.
+        required: false
         type: string
+        default: ""
       demo_seeder:
         description: "Seeder class invoked when fresh=true"
         required: false
