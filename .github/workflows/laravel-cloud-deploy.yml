@@ -129,6 +129,12 @@ jobs:
           SIBLINGS: ${{ inputs.siblings }}
         run: |
           set -euo pipefail
+          echo "::group::CODENZIA_PAT diagnostic (no values exposed)"
+          echo "  length: ${#GH_TOKEN}"
+          echo "  starts_with_ghp_: $([[ "$GH_TOKEN" == ghp_* ]] && echo yes || echo no)"
+          echo "  has_whitespace:   $([[ "$GH_TOKEN" =~ [[:space:]] ]] && echo yes || echo no)"
+          echo "  sha256_prefix:    $(printf '%s' "$GH_TOKEN" | sha256sum | head -c 16)"
+          echo "::endgroup::"
           while IFS= read -r raw; do
             line="$(echo "$raw" | sed 's/#.*$//' | xargs)"
             [ -z "$line" ] && continue
