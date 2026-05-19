@@ -92,7 +92,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    environment: ${{ inputs.environment }}
+    # No `environment:` here. We tried `environment: demo` for deployment-
+    # tracking visibility, but it scoped secret resolution to that env and
+    # blocked org-level CODENZIA_PAT from inheriting through `secrets: inherit`.
+    # Org-level secrets resolve cleanly without an env on the job.
     env:
       APP_NAME: ${{ inputs.app_name }}
       DOMAIN: ${{ inputs.domain }}
