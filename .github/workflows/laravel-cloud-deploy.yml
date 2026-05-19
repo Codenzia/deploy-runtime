@@ -1,0 +1,218 @@
+name: Laravel Cloud Deploy (reusable)
+
+# Reusable workflow that deploys a Laravel app to a Hostinger Cloud Startup
+# subdomain via SSH. Called by app repos (e.g. Codenzia/serveeta).
+#
+# Prerequisites on the host (one-time per app):
+#   1. `~/codenzia/deploy-runtime/` is a git clone of this repo.
+#   2. `~/codenzia/deploy-runtime/provision-app.sh APP DOMAIN` has been run
+#      → creates apps/shared/{.env,storage,database.sqlite}, drops the
+#      activator at apps/deploy.sh, and the top-level rewrite template
+#      at apps/.htaccess.public_html.
+#   3. apps/shared/.env is seeded with APP_KEY, DB path, etc.
+#   4. The repo's deploy public key is appended to ~/.ssh/authorized_keys.
+#   5. hPanel: subdomain created, PHP version set, cron jobs added.
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Short app slug (e.g. serveeta) — used as APP env on host"
+        required: true
+        type: string
+      domain:
+        description: "Full FQDN (e.g. serveeta.codenzia.com)"
+        required: true
+        type: string
+      siblings:
+        description: |
+          Multiline list of sibling Composer path-repo packages to clone
+          alongside the app, one per line in the format:
+            <github-org/repo> <target-dir-relative-to-workspace>
+          Example:
+            Codenzia/Platform                 platform
+            Codenzia/filament-panel-base-dev  filament-panel-base
+        required: true
+        type: string
+      demo_seeder:
+        description: "Seeder class invoked when fresh=true"
+        required: false
+        type: string
+        default: "DemoSeeder"
+      php_bin:
+        description: "Absolute path to the PHP binary on the host"
+        required: false
+        type: string
+        default: "/usr/bin/php"
+      php_version:
+        description: "PHP version installed on the GitHub Actions runner"
+        required: false
+        type: string
+        default: "8.3"
+      php_extensions:
+        description: "PHP extensions installed on the runner"
+        required: false
+        type: string
+        default: "mbstring,xml,curl,zip,bcmath,intl,gd,mysql"
+      node_version:
+        description: "Node version on the runner (used for the Vite build)"
+        required: false
+        type: string
+        default: "20"
+      environment:
+        description: "GitHub Environment name that holds the host secrets"
+        required: false
+        type: string
+        default: "demo"
+      fresh:
+        description: "Reseed demo data (migrate:fresh + db:seed --class=<demo_seeder>)"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CODENZIA_PAT:
+        required: true
+      HOST_HOSTNAME:
+        required: true
+      HOST_USER:
+        required: true
+      HOST_PORT:
+        required: true
+      HOST_SSH_KEY:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.environment }}
+    env:
+      APP_NAME: ${{ inputs.app_name }}
+      DOMAIN: ${{ inputs.domain }}
+      DEMO_SEEDER: ${{ inputs.demo_seeder }}
+      PHP_BIN: ${{ inputs.php_bin }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v6
+        with:
+          path: app
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          extensions: ${{ inputs.php_extensions }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Clone sibling Composer packages
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+          SIBLINGS: ${{ inputs.siblings }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r raw; do
+            line="$(echo "$raw" | sed 's/#.*$//' | xargs)"
+            [ -z "$line" ] && continue
+            read -r repo dest <<<"$line"
+            echo "::group::clone $repo -> $dest"
+            git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$dest"
+            echo "::endgroup::"
+          done <<< "$SIBLINGS"
+
+      - name: Install PHP dependencies (prod)
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage artifact (dereference path-repo symlinks)
+        run: |
+          mkdir -p _artifact
+          rsync -aL \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.vscode' \
+            --exclude='.idea' \
+            --exclude='.claude' \
+            --exclude='.agents' \
+            --exclude='.gemini' \
+            --exclude='node_modules' \
+            --exclude='tests' \
+            --exclude='docs' \
+            --exclude='public/hot' \
+            --exclude='*.log' \
+            --exclude='*.sqlite' \
+            --exclude='*.map' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='storage/logs/*' \
+            --exclude='storage/framework/cache/data/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='_artifact' \
+            ./ _artifact/
+
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.HOST_SSH_KEY }}
+
+      - name: Trust host key
+        working-directory: ${{ github.workspace }}
+        env:
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$HOST_PORT" -H "$HOST_HOSTNAME" >> ~/.ssh/known_hosts
+
+      - name: Compute release id
+        working-directory: ${{ github.workspace }}
+        run: |
+          REL="$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}"
+          echo "REL=$REL" >> "$GITHUB_ENV"
+
+      - name: Rsync release to host
+        env:
+          HOST_USER: ${{ secrets.HOST_USER }}
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+        run: |
+          APPS="domains/${DOMAIN}/apps"
+          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" "mkdir -p \"${APPS}/releases/${REL}\""
+          rsync -az --delete -e "ssh -p $HOST_PORT" _artifact/ "${HOST_USER}@${HOST_HOSTNAME}:${APPS}/releases/${REL}/"
+
+      - name: Activate release
+        env:
+          HOST_USER: ${{ secrets.HOST_USER }}
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+          FRESH: ${{ inputs.fresh }}
+        run: |
+          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
+
+      - name: Smoke test
+        working-directory: ${{ github.workspace }}
+        env:
+          HOST_USER: ${{ secrets.HOST_USER }}
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+        run: |
+          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
+            "test -f \"domains/${DOMAIN}/public_html/public/index.php\" \
+             && test -L \"domains/${DOMAIN}/public_html/.env\" \
+             && test -L \"domains/${DOMAIN}/public_html/storage\""
+          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "https://${DOMAIN}/up" || echo "warning: /up smoke failed (TLS or DNS not yet ready)"
