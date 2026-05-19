@@ -1,0 +1,26 @@
+# Top-level Hostinger Cloud Startup rewrite for demo subdomains where the
+# doc root is pinned at public_html/ and the full Laravel project tree
+# lives directly inside it. Mirrors C:\mh2\Projects\Codenzia\GitHub\.htaccess
+# (the master template the operator keeps for manual deploys).
+#
+# What this does:
+#   1. Hard-blocks direct HTTP access to sensitive Laravel source dirs and
+#      config files that would otherwise be reachable under public_html/.
+#   2. Routes every remaining request into public_html/public/ (the Laravel
+#      front controller).
+#
+# Dropped by provision-app.sh into apps/.htaccess.public_html on the host;
+# copied to public_html/.htaccess on first deploy by the release activator
+# (never overwrites an existing one).
+
+RewriteEngine On
+
+# Block direct access to sensitive files/dirs
+RewriteRule ^\.env - [F,L]
+RewriteRule ^\.git - [F,L]
+RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor)(/|$) - [F,L]
+RewriteRule ^(composer\.(json|lock)|package(-lock)?\.json|artisan|phpunit\.xml)$ - [F,L]
+
+# Send everything else through public/
+RewriteCond %{REQUEST_URI} !^/public/
+RewriteRule ^(.*)$ public/$1 [L]
