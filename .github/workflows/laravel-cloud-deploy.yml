@@ -62,21 +62,17 @@ on:
         required: false
         type: string
         default: "20"
-      environment:
-        description: "GitHub Environment name that holds the host secrets"
-        required: false
-        type: string
-        default: "demo"
       fresh:
         description: "Reseed demo data (migrate:fresh + db:seed --class=<demo_seeder>)"
         required: false
         type: boolean
         default: false
     # Secrets are declared (so cross-repo inheritance forwards them) but
-    # NOT marked required, because `required: true` + `secrets: inherit`
-    # trips a validator bug in cross-repo reusable workflows. At runtime
-    # the inherited values flow through normally; if any are missing the
-    # individual step (clone, ssh-agent) will fail with a clear error.
+    # NOT marked required: callers may use `secrets: inherit`, which the
+    # workflow_call validator can't resolve at parse time — `required: true`
+    # would then reject the call. At runtime, the inherited values flow
+    # through normally; if any are missing, the individual step (clone,
+    # ssh-agent) will fail with a clear error.
     secrets:
       CODENZIA_PAT:
         required: false
@@ -92,10 +88,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    # No `environment:` here. We tried `environment: demo` for deployment-
-    # tracking visibility, but it scoped secret resolution to that env and
-    # blocked org-level CODENZIA_PAT from inheriting through `secrets: inherit`.
-    # Org-level secrets resolve cleanly without an env on the job.
+    # Note: do NOT add `environment:` here. We tried it for deployment-
+    # tracking visibility — it scoped secret resolution to that env and
+    # broke inheritance from the caller. Secrets resolve cleanly without
+    # an env on the job.
     env:
       APP_NAME: ${{ inputs.app_name }}
       DOMAIN: ${{ inputs.domain }}
@@ -132,12 +128,6 @@ jobs:
           SIBLINGS: ${{ inputs.siblings }}
         run: |
           set -euo pipefail
-          echo "::group::CODENZIA_PAT diagnostic (no values exposed)"
-          echo "  length: ${#GH_TOKEN}"
-          echo "  starts_with_ghp_: $([[ "$GH_TOKEN" == ghp_* ]] && echo yes || echo no)"
-          echo "  has_whitespace:   $([[ "$GH_TOKEN" =~ [[:space:]] ]] && echo yes || echo no)"
-          echo "  sha256_prefix:    $(printf '%s' "$GH_TOKEN" | sha256sum | head -c 16)"
-          echo "::endgroup::"
           while IFS= read -r raw; do
             line="$(echo "$raw" | sed 's/#.*$//' | xargs)"
             [ -z "$line" ] && continue
