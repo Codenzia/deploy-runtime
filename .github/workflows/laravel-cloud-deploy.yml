@@ -147,6 +147,56 @@ jobs:
             echo "::endgroup::"
           done <<< "$SIBLINGS"
 
+      - name: Register sibling path repos in composer.json
+        working-directory: app
+        env:
+          SIBLINGS: ${{ inputs.siblings }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIBLINGS" ]; then
+            echo "no siblings input; skipping path-repo registration"
+            exit 0
+          fi
+          # Append a path repo for each cloned sibling to composer.json's
+          # `repositories` array. Path repos always beat VCS sources for
+          # the same package, so composer install will resolve sibling
+          # packages from the freshly-cloned local copies (current HEAD of
+          # each sibling's main branch) instead of going to GitHub VCS
+          # — no Composer github-oauth setup needed, and no dependency on
+          # the consuming app having wikimedia/composer-merge-plugin
+          # wired up to read composer.local.json. The mutation is
+          # in-place on the CI checkout only; the committed composer.json
+          # is untouched.
+          python3 - <<'PY'
+          import json, os
+          with open('composer.json', 'r', encoding='utf-8') as f:
+              cj = json.load(f)
+          cj.setdefault('repositories', [])
+          existing = {r.get('url') for r in cj['repositories'] if isinstance(r, dict)}
+          added = 0
+          for raw in os.environ['SIBLINGS'].splitlines():
+              line = raw.split('#', 1)[0].strip()
+              if not line:
+                  continue
+              parts = line.split()
+              if len(parts) != 2:
+                  continue
+              repo, dest = parts
+              url = f'../{dest}'
+              if url in existing:
+                  continue
+              cj['repositories'].append({
+                  'type': 'path',
+                  'url': url,
+                  'options': {'symlink': True},
+              })
+              added += 1
+          with open('composer.json', 'w', encoding='utf-8') as f:
+              json.dump(cj, f, indent=4)
+              f.write('\n')
+          print(f'added {added} sibling path repos to composer.json')
+          PY
+
       - name: Install PHP dependencies (prod)
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
