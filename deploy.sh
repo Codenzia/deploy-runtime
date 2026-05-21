@@ -135,6 +135,22 @@ if [ "$FRESH" = "true" ]; then
     case "$DOMAIN" in
         *.codenzia.com)
             echo "FRESH=true on demo host '$DOMAIN' → migrate:fresh + db:seed --class=$DEMO_SEEDER"
+            # Pre-FRESH backup: gzipped copy of the SQLite file before we drop
+            # tables. Lives next to the nightly dumps in ~/backups/demos/<app>/;
+            # keep the last 5 pre-fresh snapshots so accidental wipes are
+            # recoverable for ~5 deploys, then auto-prune.
+            if [ -f "$DB_FILE" ] && [ -s "$DB_FILE" ]; then
+                BACKUP_DIR="$HOME/backups/demos/$APP"
+                mkdir -p "$BACKUP_DIR"
+                STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+                BACKUP_FILE="$BACKUP_DIR/pre-fresh-${STAMP}.sqlite.gz"
+                gzip -c "$DB_FILE" > "$BACKUP_FILE"
+                echo "pre-FRESH backup written: $BACKUP_FILE ($(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE") bytes)"
+                # Retain only the 5 most recent pre-fresh snapshots.
+                ls -1t "$BACKUP_DIR"/pre-fresh-*.sqlite.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
+            else
+                echo "pre-FRESH backup skipped: $DB_FILE is empty or missing"
+            fi
             "$PHP_BIN" artisan migrate:fresh --force
             "$PHP_BIN" artisan db:seed --class="$DEMO_SEEDER" --force
             ;;
