@@ -67,6 +67,15 @@ on:
         required: false
         type: boolean
         default: false
+      mode:
+        description: |
+          "release"  → APP_DEBUG=false, APP_ENV=production, LOG_LEVEL=error
+          "debug"    → APP_DEBUG=true,  APP_ENV=local,      LOG_LEVEL=debug
+          Use "debug" temporarily to inspect a production-only issue on the
+          live URL; re-deploy with "release" to switch back.
+        required: false
+        type: string
+        default: "release"
     # Secrets are declared (so cross-repo inheritance forwards them) but
     # NOT marked required: callers may use `secrets: inherit`, which the
     # workflow_call validator can't resolve at parse time — `required: true`
@@ -257,9 +266,10 @@ jobs:
           HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
           HOST_PORT: ${{ secrets.HOST_PORT }}
           FRESH: ${{ inputs.fresh }}
+          MODE: ${{ inputs.mode }}
         run: |
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
-            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
 
       - name: Smoke test
         working-directory: ${{ github.workspace }}

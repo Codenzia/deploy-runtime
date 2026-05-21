@@ -5,6 +5,8 @@
 #   DOMAIN       full subdomain, e.g. serveeta.codenzia.com
 #   REL          release id (timestamp-sha), e.g. 20260518T120000Z-abc1234
 #   FRESH        "true" to migrate:fresh + reseed, default "false"
+#   MODE         "release" (default) → APP_DEBUG=false, APP_ENV=production
+#                "debug"              → APP_DEBUG=true,  APP_ENV=local
 #   DEMO_SEEDER  seeder class for FRESH path, default "DemoSeeder"
 #   PHP_BIN      php binary path, default /usr/bin/php (Hostinger uses a single
 #                php binary aliased to the version configured per-domain)
@@ -20,6 +22,7 @@ set -euo pipefail
 : "${DOMAIN:?DOMAIN is required}"
 : "${REL:?REL is required}"
 FRESH="${FRESH:-false}"
+MODE="${MODE:-release}"
 DEMO_SEEDER="${DEMO_SEEDER:-DemoSeeder}"
 PHP_BIN="${PHP_BIN:-/usr/bin/php}"
 
@@ -92,6 +95,36 @@ cd "$PUB"
 # Build the public/storage symlink directly with bash instead — equivalent
 # result, no PHP shell-out needed.
 ln -sfn "$SHARED/storage/app/public" "$PUB/public/storage"
+
+# Apply MODE (release|debug) by rewriting the shared .env. Done in-place so
+# the keys are preserved across deploys (rsync excludes /.env). Caches are
+# rebuilt below, so changes take effect on the next request.
+case "$MODE" in
+    debug)
+        echo "MODE=debug → APP_DEBUG=true APP_ENV=local LOG_LEVEL=debug"
+        sed -i 's/^APP_DEBUG=.*/APP_DEBUG=true/'   "$ENV_FILE"
+        sed -i 's/^APP_ENV=.*/APP_ENV=local/'      "$ENV_FILE"
+        if grep -q '^LOG_LEVEL=' "$ENV_FILE"; then
+            sed -i 's/^LOG_LEVEL=.*/LOG_LEVEL=debug/' "$ENV_FILE"
+        else
+            echo 'LOG_LEVEL=debug' >> "$ENV_FILE"
+        fi
+        ;;
+    release|"")
+        echo "MODE=release → APP_DEBUG=false APP_ENV=production LOG_LEVEL=error"
+        sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/'    "$ENV_FILE"
+        sed -i 's/^APP_ENV=.*/APP_ENV=production/'   "$ENV_FILE"
+        if grep -q '^LOG_LEVEL=' "$ENV_FILE"; then
+            sed -i 's/^LOG_LEVEL=.*/LOG_LEVEL=error/' "$ENV_FILE"
+        else
+            echo 'LOG_LEVEL=error' >> "$ENV_FILE"
+        fi
+        ;;
+    *)
+        echo "FATAL: unknown MODE='$MODE' (expected 'release' or 'debug')" >&2
+        exit 1
+        ;;
+esac
 
 if [ "$FRESH" = "true" ]; then
     echo "FRESH=true → migrate:fresh + db:seed --class=$DEMO_SEEDER"
