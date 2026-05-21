@@ -133,7 +133,7 @@ if [ "$FRESH" = "true" ]; then
     # If a future operator legitimately needs to reset a non-demo host,
     # they can do it manually via /console or extend the allowlist below.
     case "$DOMAIN" in
-        *.codenzia.com|*.codenzia.dev)
+        *.codenzia.com)
             echo "FRESH=true on demo host '$DOMAIN' → migrate:fresh + db:seed --class=$DEMO_SEEDER"
             "$PHP_BIN" artisan migrate:fresh --force
             "$PHP_BIN" artisan db:seed --class="$DEMO_SEEDER" --force
