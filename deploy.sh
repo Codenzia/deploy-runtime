@@ -127,9 +127,24 @@ case "$MODE" in
 esac
 
 if [ "$FRESH" = "true" ]; then
-    echo "FRESH=true → migrate:fresh + db:seed --class=$DEMO_SEEDER"
-    "$PHP_BIN" artisan migrate:fresh --force
-    "$PHP_BIN" artisan db:seed --class="$DEMO_SEEDER" --force
+    # Demo-host guard: migrate:fresh is destructive (drops all tables).
+    # Allow it only on Codenzia-controlled demo subdomains; refuse on any
+    # other host (e.g. when an app gets promoted to a customer URL later).
+    # If a future operator legitimately needs to reset a non-demo host,
+    # they can do it manually via /console or extend the allowlist below.
+    case "$DOMAIN" in
+        *.codenzia.com|*.codenzia.dev)
+            echo "FRESH=true on demo host '$DOMAIN' → migrate:fresh + db:seed --class=$DEMO_SEEDER"
+            "$PHP_BIN" artisan migrate:fresh --force
+            "$PHP_BIN" artisan db:seed --class="$DEMO_SEEDER" --force
+            ;;
+        *)
+            echo "FATAL: FRESH=true refused — '$DOMAIN' is not a Codenzia demo host." >&2
+            echo "       migrate:fresh would drop every table. If you really meant this," >&2
+            echo "       run it manually via /console after weighing the data loss." >&2
+            exit 1
+            ;;
+    esac
 else
     "$PHP_BIN" artisan migrate --force
 fi
