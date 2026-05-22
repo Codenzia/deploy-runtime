@@ -61,7 +61,14 @@ fi
 if [ ! -f "$SHARED/.env" ]; then
     touch "$SHARED/.env"
     chmod 600 "$SHARED/.env"
-    echo "NOTE: $SHARED/.env is empty — seed it before first deploy."
+    # Seed the branding hint as a commented-out line so operators see the
+    # toggle without having to read docs. Real app config (APP_KEY, DB
+    # paths, etc.) still has to be filled in before first deploy.
+    cat >> "$SHARED/.env" <<'BRANDING'
+# Branding
+# CODENZIA_BRANDING=false  # uncomment to hide "Powered by Codenzia" footer
+BRANDING
+    echo "NOTE: $SHARED/.env created with branding hint only — seed it before first deploy."
 fi
 
 if [ -f "$RUNTIME_DIR/deploy.sh" ]; then
