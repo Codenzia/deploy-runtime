@@ -68,11 +68,13 @@ on:
         type: boolean
         default: false
       mode:
-        description: "release or debug"        required: false
+        description: "release or debug"
+        required: false
         type: string
         default: "release"
       migrate:
-        description: "Backup/migrate existing manual deployment"        required: false
+        description: "Backup/migrate existing manual deployment"
+        required: false
         type: boolean
         default: false
     # Secrets are declared (so cross-repo inheritance forwards them) but
