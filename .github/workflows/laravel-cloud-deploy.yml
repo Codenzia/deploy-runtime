@@ -63,28 +63,16 @@ on:
         type: string
         default: "20"
       fresh:
-        description: "Reseed demo data (migrate:fresh + db:seed --class=<demo_seeder>)"
+        description: "Wipe the database and re-seed demo data? Tick on the very first deploy, or when you want to reset back to clean demo state. Leave unchecked for normal code-update deploys (existing data is preserved)."
         required: false
         type: boolean
         default: false
       mode:
-        description: |
-          "release"  → APP_DEBUG=false, APP_ENV=production, LOG_LEVEL=error
-          "debug"    → APP_DEBUG=true,  APP_ENV=local,      LOG_LEVEL=debug
-          Use "debug" temporarily to inspect a production-only issue on the
-          live URL; re-deploy with "release" to switch back.
-        required: false
+        description: "Run in release mode (default, production-safe) or debug mode (stack traces visible, verbose logs)? Use debug only temporarily to inspect a live issue, then re-deploy as release."        required: false
         type: string
         default: "release"
       migrate:
-        description: |
-          One-shot: when public_html has real state from a prior manual deploy
-          (real .env, SQLite DB, storage uploads), move it into apps/shared/
-          before activating this release instead of aborting. Use only on the
-          first CI deploy of an app that was previously deployed by other
-          means (FTP, /console, manual ssh). Default deploys refuse to
-          overwrite drifted state and abort with a clear error.
-        required: false
+        description: "Is there an existing manual deployment (FTP, /console, hPanel File Manager) whose .env, database, and uploads you want to keep? Tick once on the first CI deploy to migrate that data into the pipeline. Leave unchecked otherwise — default deploys refuse to overwrite manually-uploaded data."        required: false
         type: boolean
         default: false
     # Secrets are declared (so cross-repo inheritance forwards them) but
