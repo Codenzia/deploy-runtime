@@ -5,21 +5,25 @@
 #
 # What this does:
 #   1. Hard-blocks direct HTTP access to sensitive Laravel source dirs and
-#      config files that would otherwise be reachable under public_html/.
+#      files THAT PHYSICALLY EXIST under public_html — without the -d/-f
+#      conditions, the block would also hit URL patterns like /app/login
+#      (Filament panel paths) and return 403 before the rewrite below can
+#      route the request to Laravel.
 #   2. Routes every remaining request into public_html/public/ (the Laravel
 #      front controller).
 #
 # Dropped by provision-app.sh into apps/.htaccess.public_html on the host;
 # copied to public_html/.htaccess on first deploy by the release activator
-# (never overwrites an existing one).
+# (never overwrites an existing one — operators who customized it are
+# preserved).
 
 RewriteEngine On
 
-# Block direct access to sensitive files/dirs
-RewriteRule ^\.env - [F,L]
-RewriteRule ^\.git - [F,L]
-RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor)(/|$) - [F,L]
-RewriteRule ^(composer\.(json|lock)|package(-lock)?\.json|artisan|phpunit\.xml)$ - [F,L]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor|\.git)(/|$) - [F,L]
+
+RewriteCond %{REQUEST_FILENAME} -f
+RewriteRule ^(\.env|composer\.(json|lock)|package(-lock)?\.json|artisan|phpunit\.xml)$ - [F,L]
 
 # Send everything else through public/
 RewriteCond %{REQUEST_URI} !^/public/
