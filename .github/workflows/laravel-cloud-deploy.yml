@@ -63,16 +63,16 @@ on:
         type: string
         default: "20"
       fresh:
-        description: "Wipe the database and re-seed demo data? Tick on the very first deploy, or when you want to reset back to clean demo state. Leave unchecked for normal code-update deploys (existing data is preserved)."
+        description: "Reseed demo data (drops all tables)"
         required: false
         type: boolean
         default: false
       mode:
-        description: "Run in release mode (default, production-safe) or debug mode (stack traces visible, verbose logs)? Use debug only temporarily to inspect a live issue, then re-deploy as release."        required: false
+        description: "release or debug"        required: false
         type: string
         default: "release"
       migrate:
-        description: "Is there an existing manual deployment (FTP, /console, hPanel File Manager) whose .env, database, and uploads you want to keep? Tick once on the first CI deploy to migrate that data into the pipeline. Leave unchecked otherwise — default deploys refuse to overwrite manually-uploaded data."        required: false
+        description: "Backup/migrate existing manual deployment"        required: false
         type: boolean
         default: false
     # Secrets are declared (so cross-repo inheritance forwards them) but
