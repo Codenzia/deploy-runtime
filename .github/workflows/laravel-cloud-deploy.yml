@@ -76,6 +76,17 @@ on:
         required: false
         type: string
         default: "release"
+      migrate:
+        description: |
+          One-shot: when public_html has real state from a prior manual deploy
+          (real .env, SQLite DB, storage uploads), move it into apps/shared/
+          before activating this release instead of aborting. Use only on the
+          first CI deploy of an app that was previously deployed by other
+          means (FTP, /console, manual ssh). Default deploys refuse to
+          overwrite drifted state and abort with a clear error.
+        required: false
+        type: boolean
+        default: false
     # Secrets are declared (so cross-repo inheritance forwards them) but
     # NOT marked required: callers may use `secrets: inherit`, which the
     # workflow_call validator can't resolve at parse time — `required: true`
@@ -267,9 +278,10 @@ jobs:
           HOST_PORT: ${{ secrets.HOST_PORT }}
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
+          MIGRATE: ${{ inputs.migrate }}
         run: |
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
-            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' MIGRATE='${MIGRATE}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
 
       - name: Smoke test
         working-directory: ${{ github.workspace }}

@@ -7,6 +7,10 @@
 #   FRESH        "true" to migrate:fresh + reseed, default "false"
 #   MODE         "release" (default) → APP_DEBUG=false, APP_ENV=production
 #                "debug"              → APP_DEBUG=true,  APP_ENV=local
+#   MIGRATE      "true" to one-shot move existing public_html state (real .env,
+#                SQLite DB, storage uploads) into apps/shared/ before the
+#                deploy proceeds. Use on first CI deploy of an app that was
+#                previously deployed manually (FTP, /console, etc.).
 #   DEMO_SEEDER  seeder class for FRESH path, default "DemoSeeder"
 #   PHP_BIN      php binary path, default /usr/bin/php (Hostinger uses a single
 #                php binary aliased to the version configured per-domain)
@@ -23,6 +27,7 @@ set -euo pipefail
 : "${REL:?REL is required}"
 FRESH="${FRESH:-false}"
 MODE="${MODE:-release}"
+MIGRATE="${MIGRATE:-false}"
 DEMO_SEEDER="${DEMO_SEEDER:-DemoSeeder}"
 PHP_BIN="${PHP_BIN:-/usr/bin/php}"
 
@@ -56,6 +61,110 @@ fi
 
 mkdir -p "$LOG_DIR"
 mkdir -p "$PUB"
+
+# Pre-deploy snapshot — always take a tarball of public_html before any
+# rsync touches it, in case the drift guard below misses something or
+# content surfaces that the operator didn't expect. Kept in
+# ~/backups/<app>/pre-deploy-<stamp>.tar.gz; retain last 3 to bound disk.
+PREDEPLOY_TARBALL=""
+if [ -d "$PUB" ] && [ -n "$(ls -A "$PUB" 2>/dev/null)" ]; then
+    BACKUP_DIR="$HOME/backups/$APP"
+    mkdir -p "$BACKUP_DIR"
+    STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+    PREDEPLOY_TARBALL="$BACKUP_DIR/pre-deploy-${STAMP}.tar.gz"
+    if tar -czf "$PREDEPLOY_TARBALL" -C "$DOMAIN_DIR" public_html 2>/dev/null; then
+        SIZE="$(du -sh "$PREDEPLOY_TARBALL" 2>/dev/null | cut -f1)"
+        echo "pre-deploy snapshot: $PREDEPLOY_TARBALL ($SIZE)"
+        ls -1t "$BACKUP_DIR"/pre-deploy-*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+    else
+        echo "pre-deploy snapshot SKIPPED (tar failed)" >&2
+        PREDEPLOY_TARBALL=""
+    fi
+fi
+
+# Drift detection — refuse to overwrite real state in public_html that
+# would be destroyed by the rsync + symlink re-bind below. Operator opts
+# into one-shot migration by setting MIGRATE=true.
+DRIFT=()
+
+if [ -f "$PUB/.env" ] && [ ! -L "$PUB/.env" ] && grep -q '^APP_KEY=' "$PUB/.env" 2>/dev/null; then
+    DRIFT+=("$PUB/.env  (real file with APP_KEY)")
+fi
+
+if [ -f "$PUB/database/database.sqlite" ] && [ ! -L "$PUB/database/database.sqlite" ]; then
+    DB_BYTES="$(stat -c%s "$PUB/database/database.sqlite" 2>/dev/null || echo 0)"
+    if [ "$DB_BYTES" -gt 0 ]; then
+        DRIFT+=("$PUB/database/database.sqlite  ($DB_BYTES bytes)")
+    fi
+fi
+
+if [ -d "$PUB/storage" ] && [ ! -L "$PUB/storage" ]; then
+    STORAGE_FILES="$(find "$PUB/storage/app" -type f 2>/dev/null | wc -l)"
+    if [ "$STORAGE_FILES" -gt 0 ]; then
+        DRIFT+=("$PUB/storage  (real dir, $STORAGE_FILES files under storage/app/)")
+    fi
+fi
+
+if [ "${#DRIFT[@]}" -gt 0 ]; then
+    if [ "$MIGRATE" != "true" ]; then
+        {
+            echo ""
+            echo "================================================================"
+            echo "FATAL: public_html has state that would be destroyed on deploy"
+            echo "================================================================"
+            for item in "${DRIFT[@]}"; do
+                echo "  - $item"
+            done
+            echo ""
+            if [ -n "$PREDEPLOY_TARBALL" ]; then
+                echo "Pre-deploy snapshot already taken: $PREDEPLOY_TARBALL"
+                echo ""
+            fi
+            echo "To migrate this state into apps/shared/ and proceed, re-run the"
+            echo "workflow with the 'migrate' input checked (MIGRATE=true). Migration"
+            echo "is one-shot: once state lives in apps/shared/, future deploys find"
+            echo "symlinks in place and proceed normally."
+        } >&2
+        exit 1
+    fi
+
+    # MIGRATE=true: move real public_html state into apps/shared/ where
+    # the symlink re-bind below will find it. Per-item refuse if shared
+    # already holds content for that piece (avoid silent reconciliation).
+    echo "MIGRATE=true → moving public_html state into apps/shared/"
+
+    if [ -f "$PUB/.env" ] && [ ! -L "$PUB/.env" ] && grep -q '^APP_KEY=' "$PUB/.env" 2>/dev/null; then
+        if [ -s "$ENV_FILE" ] && grep -q '^APP_KEY=' "$ENV_FILE" 2>/dev/null; then
+            echo "FATAL: $PUB/.env and $ENV_FILE both have APP_KEY — reconcile manually." >&2
+            exit 1
+        fi
+        mv "$PUB/.env" "$ENV_FILE"
+        chmod 600 "$ENV_FILE"
+        echo "  migrated $PUB/.env → $ENV_FILE"
+    fi
+
+    if [ -f "$PUB/database/database.sqlite" ] && [ ! -L "$PUB/database/database.sqlite" ]; then
+        DB_BYTES="$(stat -c%s "$PUB/database/database.sqlite" 2>/dev/null || echo 0)"
+        if [ "$DB_BYTES" -gt 0 ]; then
+            EXISTING_DB_BYTES="$(stat -c%s "$DB_FILE" 2>/dev/null || echo 0)"
+            if [ "$EXISTING_DB_BYTES" -gt 0 ]; then
+                echo "FATAL: $PUB/database/database.sqlite and $DB_FILE both have content — reconcile manually." >&2
+                exit 1
+            fi
+            mv "$PUB/database/database.sqlite" "$DB_FILE"
+            echo "  migrated $PUB/database/database.sqlite → $DB_FILE"
+        fi
+    fi
+
+    if [ -d "$PUB/storage" ] && [ ! -L "$PUB/storage" ]; then
+        STORAGE_FILES="$(find "$PUB/storage/app" -type f 2>/dev/null | wc -l)"
+        if [ "$STORAGE_FILES" -gt 0 ]; then
+            rsync -a --remove-source-files "$PUB/storage/" "$SHARED/storage/"
+            find "$PUB/storage" -depth -type d -empty -delete 2>/dev/null || true
+            echo "  migrated $PUB/storage → $SHARED/storage  ($STORAGE_FILES files)"
+        fi
+    fi
+fi
 
 # Local rsync from staged release into the live doc root. --delete cleans
 # stale files; exclusions preserve the top-level .htaccess that rewrites
