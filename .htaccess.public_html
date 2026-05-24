@@ -3,14 +3,15 @@
 # lives directly inside it. Mirrors C:\mh2\Projects\Codenzia\GitHub\.htaccess
 # (the master template the operator keeps for manual deploys).
 #
-# What this does:
-#   1. Hard-blocks direct HTTP access to sensitive Laravel source dirs and
-#      files THAT PHYSICALLY EXIST under public_html — without the -d/-f
-#      conditions, the block would also hit URL patterns like /app/login
-#      (Filament panel paths) and return 403 before the rewrite below can
-#      route the request to Laravel.
-#   2. Routes every remaining request into public_html/public/ (the Laravel
-#      front controller).
+# Single responsibility: route every request to public/. Laravel's front
+# controller (public/index.php) handles routing from there. This also
+# hides source dirs (app/, config/, vendor/, etc.) — direct requests get
+# rewritten to /public/<that path>, which doesn't exist → Apache 404s.
+#
+# We deliberately do NOT add path-prefix block rules like
+#   RewriteRule ^(app|bootstrap|...)(/|$) - [F,L]
+# because Filament uses /app/* as a panel URL prefix — that block would
+# 403 valid panel URLs before the rewrite could route them to Laravel.
 #
 # Dropped by provision-app.sh into apps/.htaccess.public_html on the host;
 # copied to public_html/.htaccess on first deploy by the release activator
@@ -19,12 +20,5 @@
 
 RewriteEngine On
 
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^(app|bootstrap|config|database|resources|routes|tests|vendor|\.git)(/|$) - [F,L]
-
-RewriteCond %{REQUEST_FILENAME} -f
-RewriteRule ^(\.env|composer\.(json|lock)|package(-lock)?\.json|artisan|phpunit\.xml)$ - [F,L]
-
-# Send everything else through public/
 RewriteCond %{REQUEST_URI} !^/public/
 RewriteRule ^(.*)$ public/$1 [L]
