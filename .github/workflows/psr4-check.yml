@@ -1,0 +1,57 @@
+name: psr4-check
+
+# Reusable PSR-4 case-sensitivity audit. Catches the Windows/git
+# core.ignorecase=true footgun: a file renamed on Windows but with
+# git silently keeping the old name. On Linux the PSR-4 autoloader
+# is case-sensitive, so the case mismatch crashes the host at
+# runtime — usually right after the first deploy.
+#
+# Strategy: for every PHP class/interface/trait/enum tracked in git
+# under app/, tests/Feature/, tests/Unit/, compare the git-tracked
+# filename (case-sensitive — bypasses Windows lies) against the
+# `class X` declaration inside. Any mismatch fails the build.
+#
+# Migrations are skipped because Laravel loads them by filename
+# (snake_case timestamp) not class name — the file/class mismatch
+# there is intentional and historic.
+
+on:
+  workflow_call:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Audit git-tracked filename ↔ class declaration case
+        shell: bash
+        run: |
+          set -uo pipefail
+          mismatches=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            base=$(basename "$f" .php)
+            declared=$(grep -m1 -oE '^[[:space:]]*(final[[:space:]]+|abstract[[:space:]]+|readonly[[:space:]]+)*[[:space:]]*(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$f" 2>/dev/null | grep -oE '(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' | awk '{print $2}' | head -1)
+            [ -z "$declared" ] && continue
+            if [ "$declared" != "$base" ]; then
+              echo "::error file=$f,line=1::Git-tracked filename '$base.php' does not match declared class '$declared'. PSR-4 autoload will fail on Linux (case-sensitive)."
+              mismatches=$((mismatches + 1))
+            fi
+          done < <(git ls-files 'app/*.php' 'tests/Feature/*.php' 'tests/Unit/*.php' 2>/dev/null)
+
+          if [ "$mismatches" -gt 0 ]; then
+            echo ""
+            echo "Found $mismatches case/name mismatch(es)."
+            echo ""
+            echo "To fix a single file (two-step rename to force the case change through git's index):"
+            echo "  git mv -f path/to/Wrong.php path/to/Right.php.tmp"
+            echo "  git mv -f path/to/Right.php.tmp path/to/Right.php"
+            echo ""
+            echo "Root cause: Windows + 'git config core.ignorecase true' (the Windows default)."
+            echo "Git tracks the original case; Windows displays whatever it wants. The audit"
+            echo "above compares git's truth against your code's truth."
+            exit 1
+          fi
+
+          echo "PSR-4 case audit: clean ✓"
