@@ -274,6 +274,14 @@ else
     "$PHP_BIN" artisan migrate --force
 fi
 
+# Wipe every cache (config / route / view / event / compiled) before
+# rebuilding. apps/shared/storage/framework/views/ persists across
+# releases by design (it's part of shared/), so stale compiled blade
+# files for stuff like `App\Filament\pages\...` (older case-sensitivity
+# bug that has since been fixed in source) survive without this. The
+# subsequent *:cache commands then write fresh files.
+"$PHP_BIN" artisan optimize:clear
+
 "$PHP_BIN" artisan config:cache
 "$PHP_BIN" artisan route:cache
 "$PHP_BIN" artisan view:cache
