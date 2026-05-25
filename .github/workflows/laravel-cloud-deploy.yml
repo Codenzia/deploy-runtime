@@ -73,7 +73,7 @@ on:
         type: string
         default: "release"
       migrate:
-        description: "Backup existing files"
+        description: "Backup existing files (.env / database / uploads)"
         required: false
         type: boolean
         default: false
