@@ -73,7 +73,7 @@ on:
         type: string
         default: "release"
       migrate:
-        description: "First-time bootstrap: adopt existing public_html state into apps/shared/"
+        description: "Keep files that are already on the server"
         required: false
         type: boolean
         default: false
