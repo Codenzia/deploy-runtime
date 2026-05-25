@@ -1,19 +1,33 @@
 name: psr4-check
 
 # Reusable PSR-4 case-sensitivity audit. Catches the Windows/git
-# core.ignorecase=true footgun: a file renamed on Windows but with
-# git silently keeping the old name. On Linux the PSR-4 autoloader
-# is case-sensitive, so the case mismatch crashes the host at
-# runtime — usually right after the first deploy.
+# core.ignorecase=true footgun: a file (or class reference) renamed
+# on Windows but with git silently keeping the old case. On Linux
+# the PSR-4 autoloader is case-sensitive, so the case mismatch
+# crashes the host at runtime — usually right after the first deploy.
 #
-# Strategy: for every PHP class/interface/trait/enum tracked in git
-# under app/, tests/Feature/, tests/Unit/, compare the git-tracked
-# filename (case-sensitive — bypasses Windows lies) against the
-# `class X` declaration inside. Any mismatch fails the build.
+# Three independent audits, each fails the build on its own findings:
 #
-# Migrations are skipped because Laravel loads them by filename
-# (snake_case timestamp) not class name — the file/class mismatch
-# there is intentional and historic.
+#   1. Filename ↔ class declaration: every PHP class/interface/trait/
+#      enum tracked in git under app/, tests/Feature/, tests/Unit/
+#      must have a filename that matches its declared class. Catches
+#      the model/resource/etc. file rename bug.
+#
+#   2. Filament Resource inline refs: `Pages\X::route()` and
+#      `RelationManagers\X::class` usages inside *Resource.php files
+#      must resolve to files git tracks with the exact case. Catches
+#      the bug where `DashBoardResource` references `CreateDashboard`
+#      but the file is actually `CreateDashBoard.php`.
+#
+#   3. `use App\…;` import case: every `use App\X\Y;` statement must
+#      either reference a tracked file at app/X/Y.php (with that exact
+#      case) or a tracked namespace directory at app/X/Y/. Catches
+#      lingering imports that point at files no longer git-tracked
+#      under that case.
+#
+# Migrations are intentionally skipped from audit 1 — Laravel loads
+# them by filename (snake_case timestamp), not class name. The
+# file/class mismatch there is part of the framework's design.
 
 on:
   workflow_call:
@@ -24,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Audit git-tracked filename ↔ class declaration case
+      - name: Audit 1 — filename ↔ class declaration case
         shell: bash
         run: |
           set -uo pipefail
@@ -38,20 +52,103 @@ jobs:
               echo "::error file=$f,line=1::Git-tracked filename '$base.php' does not match declared class '$declared'. PSR-4 autoload will fail on Linux (case-sensitive)."
               mismatches=$((mismatches + 1))
             fi
-          done < <(git ls-files 'app/*.php' 'tests/Feature/*.php' 'tests/Unit/*.php' 2>/dev/null)
+          done < <(git ls-files | grep -E '^(app|tests/Feature|tests/Unit)/.*\.php$' || true)
 
           if [ "$mismatches" -gt 0 ]; then
             echo ""
-            echo "Found $mismatches case/name mismatch(es)."
+            echo "Found $mismatches filename ↔ class mismatch(es)."
             echo ""
-            echo "To fix a single file (two-step rename to force the case change through git's index):"
+            echo "Two-step rename to force the case change through git's index:"
             echo "  git mv -f path/to/Wrong.php path/to/Right.php.tmp"
             echo "  git mv -f path/to/Right.php.tmp path/to/Right.php"
             echo ""
-            echo "Root cause: Windows + 'git config core.ignorecase true' (the Windows default)."
-            echo "Git tracks the original case; Windows displays whatever it wants. The audit"
-            echo "above compares git's truth against your code's truth."
+            echo "Root cause: Windows + 'git config core.ignorecase true' (Windows default)."
             exit 1
           fi
+          echo "Audit 1 — filename ↔ class: clean ✓"
 
-          echo "PSR-4 case audit: clean ✓"
+      - name: Audit 2 — Filament Resource inline Pages\X / RelationManagers\X refs
+        shell: bash
+        run: |
+          set -uo pipefail
+          mismatches=0
+          files_list=$(git ls-files)
+          while IFS= read -r resource; do
+            [ -z "$resource" ] && continue
+            base=$(basename "$resource" .php)
+            parent=$(dirname "$resource")
+
+            # Pages\X::route() references
+            for ref in $(grep -oE 'Pages\\[A-Za-z_][A-Za-z0-9_]*::route' "$resource" 2>/dev/null | sed -E 's/Pages\\(.+)::route/\1/' | sort -u); do
+              expected="$parent/$base/Pages/$ref.php"
+              if ! printf '%s\n' "$files_list" | grep -qFx "$expected"; then
+                actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
+                if [ -n "$actual" ]; then
+                  echo "::error file=$resource::References Pages\\$ref::route() but git tracks $actual (case mismatch)"
+                else
+                  echo "::error file=$resource::References Pages\\$ref::route() but no $expected exists in any case"
+                fi
+                mismatches=$((mismatches + 1))
+              fi
+            done
+
+            # RelationManagers\X::class references
+            for ref in $(grep -oE 'RelationManagers\\[A-Za-z_][A-Za-z0-9_]*::class' "$resource" 2>/dev/null | sed -E 's/RelationManagers\\(.+)::class/\1/' | sort -u); do
+              expected="$parent/$base/RelationManagers/$ref.php"
+              if ! printf '%s\n' "$files_list" | grep -qFx "$expected"; then
+                actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
+                if [ -n "$actual" ]; then
+                  echo "::error file=$resource::References RelationManagers\\$ref::class but git tracks $actual (case mismatch)"
+                else
+                  echo "::error file=$resource::References RelationManagers\\$ref::class but no $expected exists in any case"
+                fi
+                mismatches=$((mismatches + 1))
+              fi
+            done
+          done < <(git ls-files | grep -E '^app/Filament/Resources/[^/]+Resource\.php$' || true)
+
+          if [ "$mismatches" -gt 0 ]; then
+            echo ""
+            echo "Found $mismatches Filament Resource inline-reference mismatch(es)."
+            exit 1
+          fi
+          echo "Audit 2 — Resource inline refs: clean ✓"
+
+      - name: Audit 3 — use App\… import case
+        shell: bash
+        run: |
+          set -uo pipefail
+          mismatches=0
+          files_list=$(git ls-files)
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            while IFS= read -r fqn; do
+              [ -z "$fqn" ] && continue
+              # Convert App\X\Y → app/X/Y
+              path_part=$(printf '%s' "$fqn" | sed 's|^App\\|app/|; s|\\|/|g')
+              expected_file="${path_part}.php"
+
+              # OK if the exact file is tracked case-sensitively
+              if printf '%s\n' "$files_list" | grep -qFx "$expected_file"; then
+                continue
+              fi
+              # OK if it's a namespace import (a tracked directory)
+              if printf '%s\n' "$files_list" | grep -q "^${path_part}/"; then
+                continue
+              fi
+              # Try case-insensitive match → if it exists in different case, that's the bug
+              actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected_file" | head -1 || true)
+              if [ -n "$actual" ]; then
+                echo "::error file=$file::use $fqn — git tracks $actual (case mismatch)"
+                mismatches=$((mismatches + 1))
+              fi
+              # No match in any case = class from outside repo's app/ tree (composer dep, sibling repo) — not our problem
+            done < <(grep -oE '^use[[:space:]]+App\\[A-Za-z_\\][A-Za-z0-9_\\]*' "$file" 2>/dev/null | sed -E 's/^use[[:space:]]+//' | sort -u)
+          done < <(git ls-files | grep -E '\.php$' || true)
+
+          if [ "$mismatches" -gt 0 ]; then
+            echo ""
+            echo "Found $mismatches 'use App\…' import case mismatch(es)."
+            exit 1
+          fi
+          echo "Audit 3 — use App\… imports: clean ✓"
