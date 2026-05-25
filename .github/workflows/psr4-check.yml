@@ -28,6 +28,13 @@ name: psr4-check
 # Migrations are intentionally skipped from audit 1 — Laravel loads
 # them by filename (snake_case timestamp), not class name. The
 # file/class mismatch there is part of the framework's design.
+#
+# Implementation note: GitHub Actions invokes `bash` with `-e`
+# (errexit) by default. That overrides any `set +e` inside the script.
+# Pipelines like `grep | grep | awk | head` legitimately return 1
+# when no matches are found, and without `|| true` the whole step
+# silently exits with no error annotations. Every such pipeline
+# below is `|| true`-protected.
 
 on:
   workflow_call:
@@ -41,12 +48,11 @@ jobs:
       - name: Audit 1 — filename ↔ class declaration case
         shell: bash
         run: |
-          set -uo pipefail
           mismatches=0
           while IFS= read -r f; do
             [ -z "$f" ] && continue
             base=$(basename "$f" .php)
-            declared=$(grep -m1 -oE '^[[:space:]]*(final[[:space:]]+|abstract[[:space:]]+|readonly[[:space:]]+)*[[:space:]]*(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$f" 2>/dev/null | grep -oE '(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' | awk '{print $2}' | head -1)
+            declared=$(grep -m1 -oE '^[[:space:]]*(final[[:space:]]+|abstract[[:space:]]+|readonly[[:space:]]+)*[[:space:]]*(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$f" 2>/dev/null | grep -oE '(class|interface|trait|enum)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' | awk '{print $2}' | head -1 || true)
             [ -z "$declared" ] && continue
             if [ "$declared" != "$base" ]; then
               echo "::error file=$f,line=1::Git-tracked filename '$base.php' does not match declared class '$declared'. PSR-4 autoload will fail on Linux (case-sensitive)."
@@ -70,7 +76,6 @@ jobs:
       - name: Audit 2 — Filament Resource inline Pages\X / RelationManagers\X refs
         shell: bash
         run: |
-          set -uo pipefail
           mismatches=0
           files_list=$(git ls-files)
           while IFS= read -r resource; do
@@ -79,31 +84,37 @@ jobs:
             parent=$(dirname "$resource")
 
             # Pages\X::route() references
-            for ref in $(grep -oE 'Pages\\[A-Za-z_][A-Za-z0-9_]*::route' "$resource" 2>/dev/null | sed -E 's/Pages\\(.+)::route/\1/' | sort -u); do
+            refs=$(grep -oE 'Pages\\[A-Za-z_][A-Za-z0-9_]*::route' "$resource" 2>/dev/null | sed -E 's/Pages\\(.+)::route/\1/' | sort -u || true)
+            for ref in $refs; do
+              [ -z "$ref" ] && continue
               expected="$parent/$base/Pages/$ref.php"
-              if ! printf '%s\n' "$files_list" | grep -qFx "$expected"; then
-                actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
-                if [ -n "$actual" ]; then
-                  echo "::error file=$resource::References Pages\\$ref::route() but git tracks $actual (case mismatch)"
-                else
-                  echo "::error file=$resource::References Pages\\$ref::route() but no $expected exists in any case"
-                fi
-                mismatches=$((mismatches + 1))
+              if printf '%s\n' "$files_list" | grep -qFx "$expected"; then
+                continue
               fi
+              actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
+              if [ -n "$actual" ]; then
+                echo "::error file=$resource::References Pages\\$ref::route() but git tracks $actual (case mismatch)"
+              else
+                echo "::error file=$resource::References Pages\\$ref::route() but no $expected exists in any case"
+              fi
+              mismatches=$((mismatches + 1))
             done
 
             # RelationManagers\X::class references
-            for ref in $(grep -oE 'RelationManagers\\[A-Za-z_][A-Za-z0-9_]*::class' "$resource" 2>/dev/null | sed -E 's/RelationManagers\\(.+)::class/\1/' | sort -u); do
+            refs=$(grep -oE 'RelationManagers\\[A-Za-z_][A-Za-z0-9_]*::class' "$resource" 2>/dev/null | sed -E 's/RelationManagers\\(.+)::class/\1/' | sort -u || true)
+            for ref in $refs; do
+              [ -z "$ref" ] && continue
               expected="$parent/$base/RelationManagers/$ref.php"
-              if ! printf '%s\n' "$files_list" | grep -qFx "$expected"; then
-                actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
-                if [ -n "$actual" ]; then
-                  echo "::error file=$resource::References RelationManagers\\$ref::class but git tracks $actual (case mismatch)"
-                else
-                  echo "::error file=$resource::References RelationManagers\\$ref::class but no $expected exists in any case"
-                fi
-                mismatches=$((mismatches + 1))
+              if printf '%s\n' "$files_list" | grep -qFx "$expected"; then
+                continue
               fi
+              actual=$(printf '%s\n' "$files_list" | grep -iFx "$expected" | head -1 || true)
+              if [ -n "$actual" ]; then
+                echo "::error file=$resource::References RelationManagers\\$ref::class but git tracks $actual (case mismatch)"
+              else
+                echo "::error file=$resource::References RelationManagers\\$ref::class but no $expected exists in any case"
+              fi
+              mismatches=$((mismatches + 1))
             done
           done < <(git ls-files | grep -E '^app/Filament/Resources/[^/]+Resource\.php$' || true)
 
@@ -117,11 +128,11 @@ jobs:
       - name: Audit 3 — use App\… import case
         shell: bash
         run: |
-          set -uo pipefail
           mismatches=0
           files_list=$(git ls-files)
           while IFS= read -r file; do
             [ -z "$file" ] && continue
+            uses=$(grep -oE '^use[[:space:]]+App\\[A-Za-z_\\][A-Za-z0-9_\\]*' "$file" 2>/dev/null | sed -E 's/^use[[:space:]]+//' | sort -u || true)
             while IFS= read -r fqn; do
               [ -z "$fqn" ] && continue
               # Convert App\X\Y → app/X/Y
@@ -143,7 +154,7 @@ jobs:
                 mismatches=$((mismatches + 1))
               fi
               # No match in any case = class from outside repo's app/ tree (composer dep, sibling repo) — not our problem
-            done < <(grep -oE '^use[[:space:]]+App\\[A-Za-z_\\][A-Za-z0-9_\\]*' "$file" 2>/dev/null | sed -E 's/^use[[:space:]]+//' | sort -u)
+            done <<< "$uses"
           done < <(git ls-files | grep -E '\.php$' || true)
 
           if [ "$mismatches" -gt 0 ]; then
