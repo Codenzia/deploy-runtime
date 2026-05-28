@@ -197,6 +197,19 @@ jobs:
           print(f'added {added} sibling path repos to composer.json')
           PY
 
+      - name: Create placeholder SQLite DB for boot-time package discovery
+        working-directory: app
+        # composer install's post-autoload-dump runs `php artisan
+        # package:discover`, which boots every service provider. Some
+        # providers (e.g. spatie/laravel-translation-loader) query the DB
+        # at boot — fails with "Database file does not exist" if the
+        # SQLite file is missing on the CI runner. The real DB lives on
+        # the host at apps/shared/database.sqlite; this is just an empty
+        # placeholder so the discovery boot can run.
+        run: |
+          mkdir -p database
+          [ -f database/database.sqlite ] || touch database/database.sqlite
+
       - name: Install PHP dependencies (prod)
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
