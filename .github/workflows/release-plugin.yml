@@ -21,10 +21,16 @@ name: Release Plugin (reusable)
 on:
   workflow_call:
     inputs:
-      version:
-        description: "Semver to release, e.g. 0.1.0"
-        required: true
+      bump:
+        description: "Release type when no exact version is given (patch|minor|major)"
+        required: false
         type: string
+        default: "patch"
+      version:
+        description: "Exact version override, e.g. 0.2.0 (empty = derive from bump)"
+        required: false
+        type: string
+        default: ""
       dev_branch:
         description: "Branch on the -dev repo to release from"
         required: false
@@ -50,6 +56,7 @@ jobs:
           ORG: ${{ github.repository_owner }}
           DEV_REPO: ${{ github.event.repository.name }}   # caller repo = <plugin>-dev
           VERSION: ${{ inputs.version }}
+          BUMP: ${{ inputs.bump }}
           DEV_BRANCH: ${{ inputs.dev_branch }}
           PUBLIC_BRANCH: ${{ inputs.public_branch }}
         run: |
@@ -62,12 +69,6 @@ jobs:
             exit 1
           fi
 
-          TAG="v${VERSION#v}"
-          case "$TAG" in
-            v[0-9]*.[0-9]*.[0-9]*) : ;;
-            *) echo "::error::'$VERSION' is not semver (expected like 0.1.0)"; exit 1 ;;
-          esac
-
           AUTH="https://x-access-token:${GH_TOKEN}@github.com/${ORG}"
           git config --global user.name  "Codenzia Release Bot"
           git config --global user.email "dev@codenzia.com"
@@ -76,8 +77,34 @@ jobs:
           git clone --quiet --branch "$PUBLIC_BRANCH" "${AUTH}/${PLUGIN}.git" public
           cd public
           git remote add dev "${AUTH}/${DEV_REPO}.git"
-          git fetch --quiet dev "$DEV_BRANCH"
+          # --no-tags: do not pull -dev's tags (the clone already has public's tags,
+          # which are the only ones the version bump should be computed from).
+          git fetch --quiet --no-tags dev "$DEV_BRANCH"
           echo "::endgroup::"
+
+          # Resolve the release tag. An explicit version wins; otherwise take the
+          # latest semver tag on PUBLIC and apply the bump (first release -> v0.1.0).
+          if [ -n "$VERSION" ]; then
+            TAG="v${VERSION#v}"
+            case "$TAG" in
+              v[0-9]*.[0-9]*.[0-9]*) : ;;
+              *) echo "::error::'$VERSION' is not semver (expected like 0.2.0)"; exit 1 ;;
+            esac
+          else
+            LAST=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+            if [ -z "$LAST" ]; then
+              TAG="v0.1.0"
+            else
+              b="${LAST#v}"; MA="${b%%.*}"; rest="${b#*.}"; MI="${rest%%.*}"; PA="${rest#*.}"
+              case "$BUMP" in
+                major) TAG="v$((MA + 1)).0.0" ;;
+                minor) TAG="v${MA}.$((MI + 1)).0" ;;
+                patch) TAG="v${MA}.${MI}.$((PA + 1))" ;;
+                *) echo "::error::bump must be patch|minor|major (got '$BUMP')"; exit 1 ;;
+              esac
+            fi
+            echo "Last public tag: ${LAST:-none}; bump=$BUMP -> releasing $TAG"
+          fi
 
           if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
             echo "::error::Tag $TAG already exists on public ($PLUGIN)."
