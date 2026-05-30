@@ -1,0 +1,108 @@
+name: Release Plugin (reusable)
+
+# Reusable workflow that cuts a release for a Codenzia plugin using SELECTIVE
+# (squash) mirroring from its -dev repo to its public (Packagist) repo.
+#
+# Public repos are CURATED mirrors, not 1:1 copies of -dev. Composer consumers
+# install tags (dist zips of the tagged tree), so internal -dev churn never needs
+# to reach public. Each release collapses the -dev delta into ONE commit on the
+# public repo and tags it. Public-only files (e.g. .github/dependabot.yml) are
+# preserved because a squash merge only applies the diff -dev introduced.
+#
+# Called by a thin `release.yml` dispatcher in each <plugin>-dev repo. The public
+# package name is derived by stripping the trailing "-dev" from the caller repo.
+#
+# Prerequisites:
+#   1. Org/repo secret RELEASE_TOKEN with contents:write on the public repo.
+#   2. The Packagist GitHub App / webhook enabled on the public repo (so the
+#      pushed tag auto-publishes).
+#   3. A public repo named <plugin> (without -dev) must already exist.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Semver to release, e.g. 0.1.0"
+        required: true
+        type: string
+      dev_branch:
+        description: "Branch on the -dev repo to release from"
+        required: false
+        type: string
+        default: "main"
+      public_branch:
+        description: "Branch on the public repo to release to"
+        required: false
+        type: string
+        default: "main"
+    secrets:
+      RELEASE_TOKEN:
+        description: "Token (PAT or GitHub App) with contents:write on the public repo"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Squash-release -dev -> public
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          DEV_REPO: ${{ github.event.repository.name }}   # caller repo = <plugin>-dev
+          VERSION: ${{ inputs.version }}
+          DEV_BRANCH: ${{ inputs.dev_branch }}
+          PUBLIC_BRANCH: ${{ inputs.public_branch }}
+        run: |
+          set -euo pipefail
+
+          # Derive the public package name by stripping a trailing "-dev".
+          PLUGIN="${DEV_REPO%-dev}"
+          if [ "$PLUGIN" = "$DEV_REPO" ]; then
+            echo "::error::Caller repo '$DEV_REPO' does not end in -dev; cannot derive the public repo."
+            exit 1
+          fi
+
+          TAG="v${VERSION#v}"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::'$VERSION' is not semver (expected like 0.1.0)"; exit 1 ;;
+          esac
+
+          AUTH="https://x-access-token:${GH_TOKEN}@github.com/${ORG}"
+          git config --global user.name  "Codenzia Release Bot"
+          git config --global user.email "dev@codenzia.com"
+
+          echo "::group::Clone public ($PLUGIN) + fetch dev ($DEV_REPO)"
+          git clone --quiet --branch "$PUBLIC_BRANCH" "${AUTH}/${PLUGIN}.git" public
+          cd public
+          git remote add dev "${AUTH}/${DEV_REPO}.git"
+          git fetch --quiet dev "$DEV_BRANCH"
+          echo "::endgroup::"
+
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "::error::Tag $TAG already exists on public ($PLUGIN)."
+            exit 1
+          fi
+
+          # One combined commit; files -dev never touched (public-only) are kept.
+          git merge --squash "dev/$DEV_BRANCH"
+          if git diff --cached --quiet; then
+            echo "Nothing new to release: public already matches dev/$DEV_BRANCH."
+            exit 0
+          fi
+
+          echo "Changes being released:"
+          git diff --cached --stat | tail -n 40
+
+          git commit -m "Release $TAG"
+          # -f overwrites any stale local tag; the guard above proves public has none.
+          git tag -fa "$TAG" -m "$TAG"
+          # Safety: the tag MUST point at the release commit we just made.
+          if [ "$(git rev-list -n1 "$TAG")" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::Tag $TAG does not point at the release commit. Aborting before push."
+            exit 1
+          fi
+          git push origin "$PUBLIC_BRANCH"
+          git push origin "$TAG"
+
+          echo "Released codenzia/$PLUGIN $TAG to public. Packagist publishes via its webhook."
