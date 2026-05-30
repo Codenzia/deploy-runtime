@@ -13,7 +13,9 @@ name: Release Plugin (reusable)
 # package name is derived by stripping the trailing "-dev" from the caller repo.
 #
 # Prerequisites:
-#   1. Org/repo secret RELEASE_TOKEN with contents:write on the public repo.
+#   1. A repo secret CODENZIA_PAT on each -dev repo, holding a PAT with
+#      contents:write on the public repos (org secrets don't reach private
+#      repos on the current plan, so it must be repo-level).
 #   2. The Packagist GitHub App / webhook enabled on the public repo (so the
 #      pushed tag auto-publishes).
 #   3. A public repo named <plugin> (without -dev) must already exist.
@@ -42,9 +44,13 @@ on:
         type: string
         default: "main"
     secrets:
-      RELEASE_TOKEN:
-        description: "Token (PAT or GitHub App) with contents:write on the public repo"
-        required: true
+      CODENZIA_PAT:
+        description: "PAT with contents:write on the public plugin repos (same repo secret the deploy flow uses)"
+        # NOT required: callers use `secrets: inherit`. Marking it required makes
+        # GitHub reject the call when the secret is absent at inherit time (the
+        # cause of 'Secret ... is required, but not provided while calling'). The
+        # runtime guard in the step below fails with a clear message if it's empty.
+        required: false
 
 jobs:
   release:
@@ -52,7 +58,7 @@ jobs:
     steps:
       - name: Squash-release -dev -> public
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
           ORG: ${{ github.repository_owner }}
           DEV_REPO: ${{ github.event.repository.name }}   # caller repo = <plugin>-dev
           VERSION: ${{ inputs.version }}
@@ -66,6 +72,11 @@ jobs:
           PLUGIN="${DEV_REPO%-dev}"
           if [ "$PLUGIN" = "$DEV_REPO" ]; then
             echo "::error::Caller repo '$DEV_REPO' does not end in -dev; cannot derive the public repo."
+            exit 1
+          fi
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::CODENZIA_PAT is empty/missing on '$DEV_REPO'. Add it as a repo secret (Contents: write) and retry."
             exit 1
           fi
 
