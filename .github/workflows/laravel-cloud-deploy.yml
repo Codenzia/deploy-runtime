@@ -77,6 +77,16 @@ on:
         required: false
         type: boolean
         default: false
+      source_dir:
+        description: |
+          Subdirectory inside the caller repo that holds the Laravel app
+          (relative to repo root). Use for monorepos where multiple
+          skeletons live in subdirs (e.g. aqarkom's tier skeletons at
+          aqarkom-lite/, aqarkom-standard/, aqarkom-pro/). Leave empty
+          for the single-app-at-root case (every existing caller).
+        required: false
+        type: string
+        default: ""
     # Secrets are declared (so cross-repo inheritance forwards them) but
     # NOT marked required: callers may use `secrets: inherit`, which the
     # workflow_call validator can't resolve at parse time — `required: true`
@@ -109,7 +119,11 @@ jobs:
       PHP_BIN: ${{ inputs.php_bin }}
     defaults:
       run:
-        working-directory: app
+        # When source_dir is set (monorepo callers), this resolves to
+        # `app/<source_dir>` so every default-working-dir step lands inside
+        # the chosen tier's skeleton. Single-app callers leave source_dir
+        # empty and this stays as `app`.
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
     steps:
       - name: Checkout app
         uses: actions/checkout@v6
@@ -129,7 +143,7 @@ jobs:
         with:
           node-version: ${{ inputs.node_version }}
           cache: 'npm'
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}/package-lock.json
 
       - name: Clone sibling Composer packages
         working-directory: ${{ github.workspace }}
@@ -148,7 +162,6 @@ jobs:
           done <<< "$SIBLINGS"
 
       - name: Register sibling path repos in composer.json
-        working-directory: app
         env:
           SIBLINGS: ${{ inputs.siblings }}
         run: |
@@ -198,7 +211,6 @@ jobs:
           PY
 
       - name: Create placeholder SQLite DB for boot-time package discovery
-        working-directory: app
         # composer install's post-autoload-dump runs `php artisan
         # package:discover`, which boots every service provider. Some
         # providers (e.g. spatie/laravel-translation-loader) query the DB
