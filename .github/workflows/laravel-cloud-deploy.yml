@@ -5,13 +5,22 @@ name: Laravel Cloud Deploy (reusable)
 #
 # Prerequisites on the host (one-time per app):
 #   1. `~/codenzia/deploy-runtime/` is a git clone of this repo.
-#   2. `~/codenzia/deploy-runtime/provision-app.sh APP DOMAIN` has been run
-#      → creates apps/shared/{.env,storage,database.sqlite}, drops the
-#      activator at apps/deploy.sh, and the top-level rewrite template
-#      at apps/.htaccess.public_html.
-#   3. apps/shared/.env is seeded with APP_KEY, DB path, etc.
-#   4. The repo's deploy public key is appended to ~/.ssh/authorized_keys.
-#   5. hPanel: subdomain created, PHP version set, cron jobs added.
+#   2. The subdomain exists in hPanel (Hostinger has no API for shared
+#      hosting subdomain creation — this stays manual).
+#   3. The repo's deploy public key is appended to ~/.ssh/authorized_keys.
+#   4. PHP version is set in hPanel.
+#
+# What the workflow does automatically on first deploy:
+#   - Detects "apps/deploy.sh missing" and runs provision-app.sh from the
+#     host's deploy-runtime clone — creates apps/shared/{.env,storage,
+#     database.sqlite}, drops the activator + .htaccess template.
+#   - Subsequent deploys skip the provision step (idempotent).
+#
+# What you still do manually after the first deploy fires provision:
+#   - Seed apps/shared/.env with APP_KEY + DB path + secrets
+#     (provision-app.sh prints the exact paths to use).
+#   - Add the 2 cron lines (scheduler + queue worker) in hPanel →
+#     Advanced → Cron Jobs (provision-app.sh prints them too).
 
 on:
   workflow_call:
@@ -275,6 +284,50 @@ jobs:
         run: |
           REL="$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}"
           echo "REL=$REL" >> "$GITHUB_ENV"
+
+      - name: Auto-provision app on host (first deploy only)
+        # Detects "this subdomain has never been deployed before" by the
+        # absence of apps/deploy.sh, and runs provision-app.sh from the
+        # host's deploy-runtime clone to create shared/, the activator,
+        # the .htaccess template, and the SQLite db. Idempotent: subsequent
+        # deploys skip this step in <1s. Subdomain still has to exist in
+        # hPanel first (Hostinger has no API for that on shared hosting).
+        env:
+          HOST_USER: ${{ secrets.HOST_USER }}
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Build the remote script locally so $DOMAIN and $APP_NAME resolve
+          # to the workflow's resolved values BEFORE being piped to the
+          # remote shell (env vars set in `env:` aren't auto-forwarded by ssh).
+          REMOTE_SCRIPT=$(cat <<EOF
+            set -euo pipefail
+            APPS="domains/${DOMAIN}/apps"
+
+            if [ ! -d "domains/${DOMAIN}" ]; then
+              echo "FATAL: domains/${DOMAIN}/ does not exist on the host."       >&2
+              echo "       Create the subdomain in hPanel first, then re-run."   >&2
+              exit 1
+            fi
+
+            if [ -x "\${APPS}/deploy.sh" ]; then
+              echo "→ \${APPS}/deploy.sh exists; provision step skipped (already provisioned)"
+              exit 0
+            fi
+
+            if [ ! -x "\$HOME/codenzia/deploy-runtime/provision-app.sh" ]; then
+              echo "FATAL: \$HOME/codenzia/deploy-runtime/provision-app.sh not found." >&2
+              echo "       Clone Codenzia/deploy-runtime to ~/codenzia/deploy-runtime first." >&2
+              exit 1
+            fi
+
+            echo "→ Provisioning ${APP_NAME} on ${DOMAIN} (first deploy)"
+            bash "\$HOME/codenzia/deploy-runtime/provision-app.sh" "${APP_NAME}" "${DOMAIN}"
+            echo "→ Provision done. NEXT: seed shared/.env (APP_KEY + DB path + secrets) and add the cron lines printed above in hPanel."
+          EOF
+          )
+          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<< "$REMOTE_SCRIPT"
 
       - name: Rsync release to host
         env:
