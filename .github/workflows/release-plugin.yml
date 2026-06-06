@@ -136,6 +136,30 @@ jobs:
           # the staged delta so the public commit never contains it.
           git rm -q --cached --ignore-unmatch .github/workflows/release.yml
 
+          # Auto-bump extra.branch-alias.dev-main to match the released minor.
+          # Stale aliases silently break `composer plugin:local` linking in
+          # consumer apps: a path-linked checkout advertises whatever the alias
+          # claims, and under a `^<MAJOR>.<MINOR>` constraint, an alias for an
+          # older minor doesn't resolve. The bump goes into the release commit
+          # AND is mirrored back to dev/$DEV_BRANCH after the public push, so
+          # the next dev session inherits it.
+          ALIAS_BUMP=""
+          if [ -f composer.json ]; then
+            T="${TAG#v}"
+            MAJOR="${T%%.*}"
+            REST="${T#*.}"
+            MINOR="${REST%%.*}"
+            ALIAS_BUMP="${MAJOR}.${MINOR}.x-dev"
+            CURRENT_ALIAS=$(jq -r '.extra["branch-alias"]["dev-main"] // ""' composer.json)
+            if [ "$CURRENT_ALIAS" != "$ALIAS_BUMP" ]; then
+              jq --indent 4 --arg a "$ALIAS_BUMP" \
+                '.extra["branch-alias"]["dev-main"] = $a' composer.json > composer.json.tmp
+              mv composer.json.tmp composer.json
+              git add composer.json
+              echo "branch-alias dev-main: ${CURRENT_ALIAS:-<unset>} -> $ALIAS_BUMP"
+            fi
+          fi
+
           if git diff --cached --quiet; then
             echo "Nothing new to release: public already matches dev/$DEV_BRANCH."
             exit 0
@@ -156,3 +180,32 @@ jobs:
           git push origin "$TAG"
 
           echo "Released codenzia/$PLUGIN $TAG to public. Packagist publishes via its webhook."
+
+          # Mirror the branch-alias bump back to dev/$DEV_BRANCH so the alias
+          # in the source repo stays in sync with the released minor. Without
+          # this, dev/$DEV_BRANCH still advertises the OLD alias and
+          # `composer plugin:local` keeps failing for consumers with
+          # `^<MAJOR>.<MINOR>` constraints until someone bumps it by hand —
+          # exactly the drift this auto-bump is meant to prevent. No-op when
+          # the previous release was on the same minor.
+          if [ -n "$ALIAS_BUMP" ]; then
+            echo "::group::Mirror branch-alias to dev/$DEV_BRANCH"
+            git fetch --quiet dev "$DEV_BRANCH"
+            git checkout -B release-alias-bump "dev/$DEV_BRANCH"
+            DEV_CURRENT_ALIAS=$(jq -r '.extra["branch-alias"]["dev-main"] // ""' composer.json)
+            if [ "$DEV_CURRENT_ALIAS" != "$ALIAS_BUMP" ]; then
+              jq --indent 4 --arg a "$ALIAS_BUMP" \
+                '.extra["branch-alias"]["dev-main"] = $a' composer.json > composer.json.tmp
+              mv composer.json.tmp composer.json
+              git add composer.json
+              git commit -m "chore(composer): branch-alias dev-main -> $ALIAS_BUMP (for $TAG)"
+              if ! git push dev "release-alias-bump:$DEV_BRANCH"; then
+                echo "::warning::Could not fast-forward dev/$DEV_BRANCH (concurrent push during release?). Bump composer.json branch-alias to $ALIAS_BUMP manually on dev/$DEV_BRANCH."
+              else
+                echo "Mirrored branch-alias bump to dev/$DEV_BRANCH."
+              fi
+            else
+              echo "dev/$DEV_BRANCH already has branch-alias $ALIAS_BUMP; no push needed."
+            fi
+            echo "::endgroup::"
+          fi
