@@ -122,8 +122,13 @@ jobs:
             exit 1
           fi
 
-          # One combined commit; files -dev never touched (public-only) are kept.
-          git merge --squash "dev/$DEV_BRANCH"
+          # Mirror dev's tree onto public EXACTLY — dev is the source of truth, so a
+          # divergent public history (e.g. from an earlier squash-release that edited
+          # the same files) can never cause a merge conflict. read-tree resets the
+          # index + worktree to dev's tree WITHOUT moving HEAD, so the release commit
+          # still lands on the public branch. (Replaces a 3-way `git merge --squash`,
+          # which conflicted the moment public and dev both touched a file.)
+          git read-tree -u --reset "dev/$DEV_BRANCH"
 
           # Keep the release dispatcher -dev-only: it must never reach public
           # (it would put a "Release to public" button on the public repo, which
