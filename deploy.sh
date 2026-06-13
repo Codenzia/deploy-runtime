@@ -203,6 +203,9 @@ cd "$PUB"
 # `php artisan storage:link` blows up with "Call to undefined function exec()".
 # Build the public/storage symlink directly with bash instead — equivalent
 # result, no PHP shell-out needed.
+if [ -d "$PUB/public/storage" ] && [ ! -L "$PUB/public/storage" ]; then
+    rm -rf "$PUB/public/storage"
+fi
 ln -sfn "$SHARED/storage/app/public" "$PUB/public/storage"
 
 # Apply MODE (release|debug) by rewriting the shared .env. Done in-place so
@@ -210,6 +213,14 @@ ln -sfn "$SHARED/storage/app/public" "$PUB/public/storage"
 # rebuilt below, so changes take effect on the next request.
 case "$MODE" in
     debug)
+        case "$DOMAIN" in
+            *.codenzia.com) : ;;
+            *)
+                echo "FATAL: MODE=debug refused — '$DOMAIN' is not a Codenzia demo host." >&2
+                echo "       APP_DEBUG=true on a customer-facing host leaks stack traces and config." >&2
+                exit 1
+                ;;
+        esac
         echo "MODE=debug → APP_DEBUG=true APP_ENV=local LOG_LEVEL=debug"
         sed -i 's/^APP_DEBUG=.*/APP_DEBUG=true/'   "$ENV_FILE"
         sed -i 's/^APP_ENV=.*/APP_ENV=local/'      "$ENV_FILE"
@@ -253,7 +264,13 @@ if [ "$FRESH" = "true" ]; then
                 mkdir -p "$BACKUP_DIR"
                 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
                 BACKUP_FILE="$BACKUP_DIR/pre-fresh-${STAMP}.sqlite.gz"
-                gzip -c "$DB_FILE" > "$BACKUP_FILE"
+                if command -v sqlite3 >/dev/null 2>&1; then
+                    tmp="$(mktemp)"
+                    sqlite3 "$DB_FILE" ".backup '$tmp'" && gzip -9 -c "$tmp" > "$BACKUP_FILE"
+                    rm -f "$tmp"
+                else
+                    gzip -9 -c "$DB_FILE" > "$BACKUP_FILE"
+                fi
                 echo "pre-FRESH backup written: $BACKUP_FILE ($(stat -c%s "$BACKUP_FILE" 2>/dev/null || stat -f%z "$BACKUP_FILE") bytes)"
                 # Retain only the 5 most recent pre-fresh snapshots.
                 ls -1t "$BACKUP_DIR"/pre-fresh-*.sqlite.gz 2>/dev/null | tail -n +6 | xargs -r rm -f
@@ -289,7 +306,13 @@ fi
 "$PHP_BIN" artisan filament:cache-components || true
 "$PHP_BIN" artisan filament:assets || true
 
-pkill -f "artisan queue:work" 2>/dev/null || true
+# Kill only THIS app's queue workers (workers cd into public_html, so match cwd).
+for pid in $(pgrep -f "artisan queue:work" 2>/dev/null || true); do
+    wcwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    case "$wcwd" in
+        "$PUB"|"$PUB"/*) kill "$pid" 2>/dev/null || true ;;
+    esac
+done
 
 # Keep last 5 staged releases for inspection / rollback diff.
 ls -1dt "$APPS/releases"/* 2>/dev/null | tail -n +6 | xargs -r rm -rf

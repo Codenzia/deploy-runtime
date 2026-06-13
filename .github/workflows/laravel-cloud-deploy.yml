@@ -113,6 +113,8 @@ on:
         required: false
       HOST_SSH_KEY:
         required: false
+      HOST_KNOWN_HOSTS:
+        required: false
 
 jobs:
   deploy:
@@ -134,6 +136,22 @@ jobs:
         # empty and this stays as `app`.
         working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
     steps:
+      - name: Validate deploy inputs
+        working-directory: ${{ github.workspace }}
+        env:
+          DOMAIN_IN: ${{ inputs.domain }}
+          APP_IN: ${{ inputs.app_name }}
+          SEEDER_IN: ${{ inputs.demo_seeder }}
+          PHPBIN_IN: ${{ inputs.php_bin }}
+          MODE_IN: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$DOMAIN_IN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || { echo "::error::domain '$DOMAIN_IN' contains illegal characters"; exit 1; }
+          [[ "$APP_IN"    =~ ^[a-z0-9][a-z0-9_-]*$ ]]            || { echo "::error::app_name '$APP_IN' contains illegal characters"; exit 1; }
+          [[ "$SEEDER_IN" =~ ^[A-Za-z0-9\\_]+$ ]]                || { echo "::error::demo_seeder '$SEEDER_IN' contains illegal characters"; exit 1; }
+          [[ "$PHPBIN_IN" =~ ^[A-Za-z0-9/._-]+$ ]]               || { echo "::error::php_bin '$PHPBIN_IN' contains illegal characters"; exit 1; }
+          [[ "$MODE_IN"   =~ ^(release|debug)$ ]]                || { echo "::error::mode must be release|debug"; exit 1; }
+
       - name: Checkout app
         uses: actions/checkout@v6
         with:
@@ -273,11 +291,10 @@ jobs:
       - name: Trust host key
         working-directory: ${{ github.workspace }}
         env:
-          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
-          HOST_PORT: ${{ secrets.HOST_PORT }}
+          HOST_KNOWN_HOSTS: ${{ secrets.HOST_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -p "$HOST_PORT" -H "$HOST_HOSTNAME" >> ~/.ssh/known_hosts
+          echo "$HOST_KNOWN_HOSTS" >> ~/.ssh/known_hosts
 
       - name: Compute release id
         working-directory: ${{ github.workspace }}

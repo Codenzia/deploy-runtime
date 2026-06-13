@@ -25,7 +25,18 @@ for db in "$HOME"/domains/*/apps/shared/database.sqlite; do
     mkdir -p "$out_dir"
     out_file="$out_dir/${app}-${DATE}.sqlite.gz"
 
-    if gzip -9 -c "$db" > "$out_file"; then
+    if command -v sqlite3 >/dev/null 2>&1; then
+        tmp="$(mktemp)"
+        if sqlite3 "$db" ".backup '$tmp'" && gzip -9 -c "$tmp" > "$out_file"; then
+            rm -f "$tmp"
+            echo "dumped $app -> $out_file ($(stat -c%s "$out_file" 2>/dev/null || stat -f%z "$out_file") bytes)"
+        else
+            rm -f "$tmp"
+            echo "FAILED to dump $app" >&2
+            rm -f "$out_file"
+            continue
+        fi
+    elif gzip -9 -c "$db" > "$out_file"; then
         echo "dumped $app -> $out_file ($(stat -c%s "$out_file" 2>/dev/null || stat -f%z "$out_file") bytes)"
     else
         echo "FAILED to dump $app" >&2
