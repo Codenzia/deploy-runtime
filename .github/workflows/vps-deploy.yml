@@ -1,0 +1,323 @@
+name: VPS Deploy (reusable)
+
+# Reusable workflow that deploys a Laravel app to the Codenzia Hostinger KVM
+# VPS (CloudPanel) using atomic releases. Called by app repos (e.g.
+# Codenzia/task-off via .github/workflows/deploy-vps.yml).
+#
+# Per-site config (site_user/domain) is resolved by the CALLER from its
+# deploy/targets.json and passed in here, so this workflow stays app-agnostic.
+#
+# Prerequisites (one-time per site — see VPS-DEPLOY-RUNBOOK.md):
+#   1. Site created in CloudPanel UI (creates the Linux user + htdocs/<domain>).
+#   2. Deploy public key appended to that site user's ~/.ssh/authorized_keys.
+#   3. Repo-level secrets set (Free org plan: org secrets don't reach private
+#      repos): VPS_HOST, VPS_PORT, VPS_SSH_KEY, CODENZIA_PAT.
+#
+# First deploy auto-provisions (creates releases/ shared/ + SQLite DB). You
+# then seed shared/.env, set the CloudPanel doc root to current/public, and
+# enable TLS — the runbook prints exact values.
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Short app slug, e.g. task-off"
+        required: true
+        type: string
+      site_user:
+        description: "CloudPanel Linux user that owns the site (= SSH user)"
+        required: true
+        type: string
+      domain:
+        description: "Full domain, e.g. task-off.com"
+        required: true
+        type: string
+      target:
+        description: "Logical target label (production|demo|...) — for logs only"
+        required: false
+        type: string
+        default: ""
+      db:
+        description: "sqlite (default) or mysql"
+        required: false
+        type: string
+        default: "sqlite"
+      fresh:
+        description: "migrate:fresh + reseed (DESTROYS data)"
+        required: false
+        type: boolean
+        default: false
+      adopt:
+        description: "On first deploy, adopt an existing non-atomic deployment's .env/db/storage"
+        required: false
+        type: boolean
+        default: false
+      seeder:
+        description: "Seeder class invoked when fresh=true"
+        required: false
+        type: string
+        default: "DatabaseSeeder"
+      mode:
+        description: "release or debug"
+        required: false
+        type: string
+        default: "release"
+      siblings:
+        description: |
+          Optional Composer path-repo siblings to clone, one per line:
+            <github-org/repo> <target-dir-relative-to-workspace>
+          Most Codenzia apps resolve private packages via Composer
+          github-oauth (CODENZIA_PAT) and can leave this empty.
+        required: false
+        type: string
+        default: ""
+      php_version:
+        required: false
+        type: string
+        default: "8.3"
+      php_extensions:
+        required: false
+        type: string
+        default: "mbstring,xml,curl,zip,bcmath,intl,gd,mysql,sqlite3,redis"
+      node_version:
+        required: false
+        type: string
+        default: "20"
+      php_bin:
+        description: "PHP binary path on the host"
+        required: false
+        type: string
+        default: "php8.3"
+      source_dir:
+        description: "Subdir holding the Laravel app (monorepo callers); empty for root"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      CODENZIA_PAT:
+        required: false
+      VPS_HOST:
+        required: false
+      VPS_PORT:
+        required: false
+      VPS_SSH_KEY:
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    env:
+      APP_NAME: ${{ inputs.app_name }}
+      SITE_USER: ${{ inputs.site_user }}
+      DOMAIN: ${{ inputs.domain }}
+      DB: ${{ inputs.db }}
+      SEEDER: ${{ inputs.seeder }}
+      PHP_BIN: ${{ inputs.php_bin }}
+    defaults:
+      run:
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@v6
+        with:
+          path: app
+
+      - name: Checkout deploy-runtime (host scripts)
+        uses: actions/checkout@v6
+        with:
+          repository: Codenzia/deploy-runtime
+          path: deploy-runtime
+          token: ${{ secrets.CODENZIA_PAT }}
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          extensions: ${{ inputs.php_extensions }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}/package-lock.json
+
+      - name: Authenticate Composer to GitHub (private VCS repos)
+        env:
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            composer config --global github-oauth.github.com "$GH_TOKEN"
+            echo "composer github-oauth configured"
+          else
+            echo "WARN: CODENZIA_PAT empty — private Composer repos will fail to resolve" >&2
+          fi
+
+      - name: Clone sibling Composer packages (optional path repos)
+        if: ${{ inputs.siblings != '' }}
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+          SIBLINGS: ${{ inputs.siblings }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r raw; do
+            line="$(echo "$raw" | sed 's/#.*$//' | xargs)"
+            [ -z "$line" ] && continue
+            read -r repo dest <<<"$line"
+            echo "::group::clone $repo -> $dest"
+            git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$dest"
+            echo "::endgroup::"
+          done <<< "$SIBLINGS"
+
+      - name: Register sibling path repos in composer.json
+        if: ${{ inputs.siblings != '' }}
+        env:
+          SIBLINGS: ${{ inputs.siblings }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          with open('composer.json', 'r', encoding='utf-8') as f:
+              cj = json.load(f)
+          cj.setdefault('repositories', [])
+          existing = {r.get('url') for r in cj['repositories'] if isinstance(r, dict)}
+          added = 0
+          for raw in os.environ['SIBLINGS'].splitlines():
+              line = raw.split('#', 1)[0].strip()
+              if not line:
+                  continue
+              parts = line.split()
+              if len(parts) != 2:
+                  continue
+              repo, dest = parts
+              url = f'../{dest}'
+              if url in existing:
+                  continue
+              cj['repositories'].append({'type': 'path', 'url': url, 'options': {'symlink': True}})
+              added += 1
+          with open('composer.json', 'w', encoding='utf-8') as f:
+              json.dump(cj, f, indent=4); f.write('\n')
+          print(f'added {added} sibling path repos')
+          PY
+
+      - name: Create placeholder SQLite DB for boot-time package discovery
+        run: |
+          mkdir -p database
+          [ -f database/database.sqlite ] || touch database/database.sqlite
+
+      - name: Install PHP dependencies (prod)
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage artifact (dereference path-repo symlinks)
+        run: |
+          mkdir -p _artifact
+          rsync -aL \
+            --exclude='.git' --exclude='.github' --exclude='.vscode' \
+            --exclude='.idea' --exclude='.claude' --exclude='.agents' \
+            --exclude='.gemini' --exclude='node_modules' --exclude='tests' \
+            --exclude='docs' --exclude='public/hot' --exclude='*.log' \
+            --exclude='*.sqlite' --exclude='*.map' --exclude='.env' \
+            --exclude='.env.*' --exclude='storage/logs/*' \
+            --exclude='storage/framework/cache/data/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='_artifact' \
+            ./ _artifact/
+
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Trust host key
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${VPS_PORT:-22}" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Compute release id
+        working-directory: ${{ github.workspace }}
+        run: echo "REL=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+
+      - name: Upload host scripts + auto-provision (first deploy)
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          ADOPT: ${{ inputs.adopt }}
+        run: |
+          set -euo pipefail
+          PORT="${VPS_PORT:-22}"
+          DEST="${SITE_USER}@${VPS_HOST}"
+          SITE_DIR="htdocs/${DOMAIN}"
+
+          # Push the current host scripts (single source of truth = this checkout).
+          ssh -p "$PORT" "$DEST" "mkdir -p \"${SITE_DIR}/.deploy\""
+          scp -P "$PORT" deploy-runtime/vps-provision.sh deploy-runtime/vps-deploy.sh \
+            "${DEST}:${SITE_DIR}/.deploy/"
+          ssh -p "$PORT" "$DEST" "chmod 0750 \"${SITE_DIR}/.deploy/\"*.sh"
+
+          # Provision only if shared/.env is missing (idempotent).
+          ADOPT_FLAG=""
+          [ "${ADOPT}" = "true" ] && ADOPT_FLAG="--adopt"
+          ssh -p "$PORT" "$DEST" bash -s <<EOF
+            set -euo pipefail
+            if [ -f "\$HOME/${SITE_DIR}/shared/.env" ]; then
+              echo "→ already provisioned; skipping"
+            else
+              echo "→ first deploy: provisioning ${APP_NAME} (${DOMAIN}) ${ADOPT_FLAG}"
+              bash "\$HOME/${SITE_DIR}/.deploy/vps-provision.sh" "${APP_NAME}" "${DOMAIN}" ${ADOPT_FLAG}
+              echo "→ NEXT: seed shared/.env, set CloudPanel doc root to current/public, enable TLS."
+            fi
+          EOF
+
+      - name: Rsync release to host
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          PORT="${VPS_PORT:-22}"
+          DEST="${SITE_USER}@${VPS_HOST}"
+          REL_DIR="htdocs/${DOMAIN}/releases/${REL}"
+          ssh -p "$PORT" "$DEST" "mkdir -p \"${REL_DIR}\""
+          rsync -az --delete -e "ssh -p $PORT" \
+            app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}/_artifact/ \
+            "${DEST}:${REL_DIR}/"
+
+      - name: Activate release
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          FRESH: ${{ inputs.fresh }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          PORT="${VPS_PORT:-22}"
+          DEST="${SITE_USER}@${VPS_HOST}"
+          ssh -p "$PORT" "$DEST" \
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' DB='${DB}' FRESH='${FRESH}' MODE='${MODE}' SEEDER='${SEEDER}' PHP_BIN='${PHP_BIN}' bash \"htdocs/${DOMAIN}/.deploy/vps-deploy.sh\""
+
+      - name: Smoke test
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          PORT="${VPS_PORT:-22}"
+          DEST="${SITE_USER}@${VPS_HOST}"
+          ssh -p "$PORT" "$DEST" \
+            "test -f \"htdocs/${DOMAIN}/current/public/index.php\" \
+             && test -L \"htdocs/${DOMAIN}/current/.env\""
+          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "https://${DOMAIN}/up" \
+            || echo "warning: /up smoke failed (TLS/DNS/doc-root may not be ready yet)"
