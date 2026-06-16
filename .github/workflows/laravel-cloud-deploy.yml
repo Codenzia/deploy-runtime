@@ -250,6 +250,8 @@ jobs:
           [ -f database/database.sqlite ] || touch database/database.sqlite
 
       - name: Install PHP dependencies (prod)
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GH_TOKEN }}"}}'
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
       - name: Build frontend assets
