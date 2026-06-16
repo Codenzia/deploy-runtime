@@ -260,6 +260,7 @@ jobs:
           npm run build
 
       - name: Stage artifact (dereference path-repo symlinks)
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
         run: |
           mkdir -p _artifact
           rsync -aL \
@@ -360,6 +361,7 @@ jobs:
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<< "$REMOTE_SCRIPT"
 
       - name: Rsync release to host
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
         env:
           HOST_USER: ${{ secrets.HOST_USER }}
           HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
