@@ -189,8 +189,10 @@ jobs:
           done <<< "$SIBLINGS"
 
       - name: Register sibling path repos in composer.json
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
         env:
           SIBLINGS: ${{ inputs.siblings }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
         run: |
           set -euo pipefail
           if [ -z "$SIBLINGS" ]; then
@@ -209,6 +211,12 @@ jobs:
           # is untouched.
           python3 - <<'PY'
           import json, os
+          # Depth = 1 (cwd is `app/`) + nested levels of source_dir.
+          # Siblings clone into github.workspace, so each `../` walks one
+          # directory closer to it. Empty source_dir → 1 dot-dot.
+          source_dir = os.environ.get('SOURCE_DIR', '').strip('/')
+          depth = 1 + (source_dir.count('/') + 1 if source_dir else 0)
+          prefix = '../' * depth
           with open('composer.json', 'r', encoding='utf-8') as f:
               cj = json.load(f)
           cj.setdefault('repositories', [])
@@ -222,7 +230,7 @@ jobs:
               if len(parts) != 2:
                   continue
               repo, dest = parts
-              url = f'../{dest}'
+              url = f'{prefix}{dest}'
               if url in existing:
                   continue
               cj['repositories'].append({
