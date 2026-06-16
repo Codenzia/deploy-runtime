@@ -293,10 +293,18 @@ jobs:
       - name: Trust host key
         working-directory: ${{ github.workspace }}
         env:
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
           HOST_KNOWN_HOSTS: ${{ secrets.HOST_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
-          echo "$HOST_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          if [ -n "$HOST_KNOWN_HOSTS" ]; then
+            echo "$HOST_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${HOST_PORT:-22}" -H "$HOST_HOSTNAME" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Compute release id
         working-directory: ${{ github.workspace }}
