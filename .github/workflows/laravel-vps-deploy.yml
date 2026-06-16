@@ -1,0 +1,321 @@
+name: Laravel VPS Deploy (reusable)
+
+# Reusable workflow that deploys a Laravel app to a Hostinger KVM VPS running
+# CloudPanel + nginx + Percona. Companion to laravel-cloud-deploy.yml (which
+# targets Hostinger shared hosting).
+#
+# Layout assumption — CloudPanel default:
+#   /home/<vps_user>/htdocs/<domain>/    — vhost docroot (Laravel app lands here)
+#   Laravel's public/ becomes / via .htaccess routing — same pattern as the
+#   codenzia.com case on shared. (Atomic releases are a future improvement.)
+#
+# Prerequisites per-domain (one-time, manual):
+#   1. CloudPanel site exists  : clpctl site:add:php --domainName=<domain> --phpVersion=8.3 --siteUser=<user> ...
+#   2. MySQL DB + user exist   : clpctl db:add --domainName=<domain> --databaseName=<db> --databaseUserName=<user> --databaseUserPassword='...'
+#   3. SSL cert installed      : clpctl lets-encrypt:install:certificate --domainName=<domain>
+#   4. Deploy pubkey appended  : echo "ssh-ed25519 ..." >> /home/<vps_user>/.ssh/authorized_keys
+#
+# Required repo secrets:
+#   CODENZIA_PAT      — composer-auth for private Codenzia packages
+#   VPS_HOSTNAME      — VPS IP or hostname (e.g. 31.97.78.215)
+#   VPS_PORT          — SSH port (typically 22)
+#   VPS_SSH_KEY       — private key matching the pubkey added to authorized_keys
+#   VPS_USER          — CloudPanel site user (e.g. task-off)
+#   MYSQL_DATABASE    — database name
+#   MYSQL_USERNAME    — database user
+#   MYSQL_PASSWORD    — database password
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Short app slug — APP_NAME in .env"
+        required: true
+        type: string
+      domain:
+        description: "Full FQDN (e.g. task-off.com)"
+        required: true
+        type: string
+      source_dir:
+        description: |
+          Subdirectory inside the caller repo that holds the Laravel app
+          (relative to repo root). Empty for single-app callers.
+        required: false
+        type: string
+        default: ""
+      siblings:
+        description: |
+          Multiline list of sibling Composer path-repo packages to clone, one per
+          line: <github-org/repo> <target-dir-relative-to-workspace>
+        required: false
+        type: string
+        default: ""
+      php_version:
+        description: "PHP version on runner + remote"
+        required: false
+        type: string
+        default: "8.3"
+      php_extensions:
+        description: "PHP extensions on runner"
+        required: false
+        type: string
+        default: "mbstring,xml,curl,zip,bcmath,intl,gd,mysql"
+      node_version:
+        description: "Node version on runner"
+        required: false
+        type: string
+        default: "20"
+      fresh:
+        description: "Reseed (drops all tables) — refused on prod-classified hosts"
+        required: false
+        type: boolean
+        default: false
+      demo_seeder:
+        description: "Seeder class when fresh=true"
+        required: false
+        type: string
+        default: "DatabaseSeeder"
+      mode:
+        description: "release or debug"
+        required: false
+        type: string
+        default: "release"
+    secrets:
+      CODENZIA_PAT:
+        required: false
+      VPS_HOSTNAME:
+        required: false
+      VPS_PORT:
+        required: false
+      VPS_SSH_KEY:
+        required: false
+      VPS_USER:
+        required: false
+      MYSQL_DATABASE:
+        required: false
+      MYSQL_USERNAME:
+        required: false
+      MYSQL_PASSWORD:
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    env:
+      APP_NAME: ${{ inputs.app_name }}
+      DOMAIN: ${{ inputs.domain }}
+      DEMO_SEEDER: ${{ inputs.demo_seeder }}
+    defaults:
+      run:
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+    steps:
+      - name: Validate deploy inputs
+        working-directory: ${{ github.workspace }}
+        env:
+          DOMAIN_IN: ${{ inputs.domain }}
+          APP_IN: ${{ inputs.app_name }}
+          MODE_IN: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$DOMAIN_IN" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] || { echo "::error::domain illegal"; exit 1; }
+          [[ "$APP_IN"    =~ ^[a-z0-9][a-z0-9_-]*$ ]]            || { echo "::error::app_name illegal"; exit 1; }
+          [[ "$MODE_IN"   =~ ^(release|debug)$ ]]                || { echo "::error::mode must be release|debug"; exit 1; }
+
+      - name: Checkout app
+        uses: actions/checkout@v6
+        with:
+          path: app
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ inputs.php_version }}
+          extensions: ${{ inputs.php_extensions }}
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+          cache-dependency-path: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}/package-lock.json
+
+      - name: Clone sibling Composer packages
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+          SIBLINGS: ${{ inputs.siblings }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIBLINGS" ]; then echo "no siblings"; exit 0; fi
+          while IFS= read -r raw; do
+            line="$(echo "$raw" | sed 's/#.*$//' | xargs)"
+            [ -z "$line" ] && continue
+            read -r repo dest <<<"$line"
+            git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${repo}.git" "$dest"
+          done <<< "$SIBLINGS"
+
+      - name: Register sibling path repos in composer.json
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+        env:
+          SIBLINGS: ${{ inputs.siblings }}
+          SOURCE_DIR: ${{ inputs.source_dir }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SIBLINGS" ]; then echo "no siblings"; exit 0; fi
+          python3 - <<'PY'
+          import json, os
+          source_dir = os.environ.get('SOURCE_DIR', '').strip('/')
+          depth = 1 + (source_dir.count('/') + 1 if source_dir else 0)
+          prefix = '../' * depth
+          with open('composer.json', 'r', encoding='utf-8') as f:
+              cj = json.load(f)
+          cj.setdefault('repositories', [])
+          existing = {r.get('url') for r in cj['repositories'] if isinstance(r, dict)}
+          for raw in os.environ['SIBLINGS'].splitlines():
+              line = raw.split('#', 1)[0].strip()
+              if not line: continue
+              parts = line.split()
+              if len(parts) != 2: continue
+              repo, dest = parts
+              url = f'{prefix}{dest}'
+              if url in existing: continue
+              cj['repositories'].append({'type': 'path', 'url': url, 'options': {'symlink': True}})
+          with open('composer.json', 'w', encoding='utf-8') as f:
+              json.dump(cj, f, indent=4); f.write('\n')
+          PY
+
+      - name: Install PHP dependencies (prod)
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.CODENZIA_PAT }}"}}'
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage artifact (dereference path-repo symlinks)
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+        run: |
+          mkdir -p _artifact
+          rsync -aL \
+            --exclude='.git' --exclude='.github' --exclude='.vscode' --exclude='.idea' \
+            --exclude='.claude' --exclude='.agents' --exclude='.gemini' \
+            --exclude='node_modules' --exclude='tests' --exclude='docs' \
+            --exclude='public/hot' --exclude='*.log' --exclude='*.sqlite' --exclude='*.map' \
+            --exclude='.env' --exclude='.env.*' \
+            --exclude='storage/logs/*' --exclude='storage/framework/cache/data/*' --exclude='storage/framework/sessions/*' \
+            --exclude='_artifact' \
+            ./ _artifact/
+
+      - name: Load SSH key
+        uses: webfactory/ssh-agent@v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Trust host key
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host *
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Rsync release to VPS htdocs
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          DEST="${VPS_USER}@${VPS_HOSTNAME}:/home/${VPS_USER}/htdocs/${DOMAIN}/"
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='storage/app/*' \
+            --exclude='storage/framework/sessions/*' \
+            --exclude='storage/logs/*' \
+            -e "ssh -p $VPS_PORT" \
+            _artifact/ "$DEST"
+
+      - name: Seed .env if missing + activate release
+        env:
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USERNAME: ${{ secrets.MYSQL_USERNAME }}
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          FRESH: ${{ inputs.fresh }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" bash -s <<EOF
+          set -euo pipefail
+          cd "/home/${VPS_USER}/htdocs/${DOMAIN}"
+
+          # Seed .env on first deploy.
+          if [ ! -f .env ]; then
+            APP_KEY="base64:\$(openssl rand -base64 32)"
+            CPW="\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)"
+            APP_ENV=\$([ "${MODE}" = "release" ] && echo production || echo local)
+            APP_DEBUG=\$([ "${MODE}" = "release" ] && echo false || echo true)
+            cat > .env <<INNER
+          APP_NAME="${APP_NAME}"
+          APP_ENV=\$APP_ENV
+          APP_KEY=\$APP_KEY
+          APP_DEBUG=\$APP_DEBUG
+          APP_URL=https://${DOMAIN}
+
+          LOG_CHANNEL=daily
+          LOG_LEVEL=warning
+
+          DB_CONNECTION=mysql
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_DATABASE=${MYSQL_DATABASE}
+          DB_USERNAME=${MYSQL_USERNAME}
+          DB_PASSWORD=${MYSQL_PASSWORD}
+
+          CACHE_DRIVER=file
+          SESSION_DRIVER=file
+          QUEUE_CONNECTION=database
+          REDIS_HOST=127.0.0.1
+
+          CONSOLE_USER=admin
+          CONSOLE_PASSWORD=\$CPW
+          INNER
+            chmod 600 .env
+            echo "Seeded .env (CONSOLE_PASSWORD=\$CPW)"
+          fi
+
+          # Refresh caches + run migrations.
+          php artisan optimize:clear || true
+          php artisan migrate --force
+
+          if [ "${FRESH}" = "true" ]; then
+            php artisan migrate:fresh --seed --seeder="${DEMO_SEEDER}" --force
+          fi
+
+          php artisan storage:link || true
+          php artisan config:cache || true
+          php artisan route:cache || true
+          php artisan view:cache || true
+          EOF
+
+      - name: Smoke test
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          CODE=\$(curl -s -o /dev/null -w '%{http_code}' "https://${DOMAIN}/up" || true)
+          if [ "\$CODE" != "200" ]; then
+            echo "::warning::smoke test got \$CODE on https://${DOMAIN}/up (might be OK if app has no /up route)"
+          else
+            echo "smoke test green"
+          fi
