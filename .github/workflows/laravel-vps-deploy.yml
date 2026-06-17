@@ -261,7 +261,7 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
           DEST="${VPS_USER}@${VPS_HOSTNAME}:/home/${VPS_USER}/htdocs/${DOMAIN}/"
-          rsync -az --delete \
+          rsync -az --delete --force --delete-excluded \
             --exclude='.env' \
             --exclude='storage/app/*' \
             --exclude='storage/framework/sessions/*' \
