@@ -317,6 +317,8 @@ jobs:
 
           CONSOLE_USER=admin
           CONSOLE_PASSWORD=\$CPW
+          ADMIN_PASSWORD=\$CPW
+          ADMIN_SEED_PASSWORD=\$CPW
           INNER
             chmod 600 .env
             echo "Seeded .env (CONSOLE_PASSWORD=\$CPW)"
