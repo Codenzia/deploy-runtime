@@ -201,6 +201,15 @@ jobs:
           mkdir -p storage/logs
           mkdir -p bootstrap/cache
 
+      - name: Create placeholder SQLite DB for boot-time package discovery
+        # composer install's post-autoload-dump runs `php artisan package:discover`,
+        # which boots the app. Without .env loaded, the default DB connection
+        # often falls back to sqlite at database/database.sqlite — a missing file
+        # there hard-fails boot. The real DB on the host is MySQL.
+        run: |
+          mkdir -p database
+          [ -f database/database.sqlite ] || touch database/database.sqlite
+
       - name: Install PHP dependencies (prod)
         env:
           COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.CODENZIA_PAT }}"}}'
