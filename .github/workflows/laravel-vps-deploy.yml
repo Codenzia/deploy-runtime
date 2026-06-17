@@ -192,6 +192,15 @@ jobs:
               json.dump(cj, f, indent=4); f.write('\n')
           PY
 
+      - name: Ensure Laravel storage subdirs exist (gitignored on most apps)
+        run: |
+          mkdir -p storage/framework/cache/data
+          mkdir -p storage/framework/sessions
+          mkdir -p storage/framework/views
+          mkdir -p storage/framework/testing
+          mkdir -p storage/logs
+          mkdir -p bootstrap/cache
+
       - name: Install PHP dependencies (prod)
         env:
           COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.CODENZIA_PAT }}"}}'
