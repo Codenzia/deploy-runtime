@@ -80,6 +80,18 @@ on:
         required: false
         type: string
         default: "release"
+      vps_user:
+        description: "CloudPanel site user that owns /home/<user>/htdocs/<domain>"
+        required: true
+        type: string
+      mysql_database:
+        description: "MySQL database name"
+        required: true
+        type: string
+      mysql_username:
+        description: "MySQL username (often same as database name)"
+        required: true
+        type: string
     secrets:
       CODENZIA_PAT:
         required: false
@@ -88,12 +100,6 @@ on:
       VPS_PORT:
         required: false
       VPS_SSH_KEY:
-        required: false
-      VPS_USER:
-        required: false
-      MYSQL_DATABASE:
-        required: false
-      MYSQL_USERNAME:
         required: false
       MYSQL_PASSWORD:
         required: false
@@ -232,7 +238,7 @@ jobs:
       - name: Rsync release to VPS htdocs
         working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
         env:
-          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_USER: ${{ inputs.vps_user }}
           VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
@@ -247,11 +253,11 @@ jobs:
 
       - name: Seed .env if missing + activate release
         env:
-          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_USER: ${{ inputs.vps_user }}
           VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
-          MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
-          MYSQL_USERNAME: ${{ secrets.MYSQL_USERNAME }}
+          MYSQL_DATABASE: ${{ inputs.mysql_database }}
+          MYSQL_USERNAME: ${{ inputs.mysql_username }}
           MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
