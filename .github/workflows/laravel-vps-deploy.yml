@@ -11,19 +11,17 @@ name: Laravel VPS Deploy (reusable)
 #
 # Prerequisites per-domain (one-time, manual):
 #   1. CloudPanel site exists  : clpctl site:add:php --domainName=<domain> --phpVersion=8.3 --siteUser=<user> ...
-#   2. MySQL DB + user exist   : clpctl db:add --domainName=<domain> --databaseName=<db> --databaseUserName=<user> --databaseUserPassword='...'
-#   3. SSL cert installed      : clpctl lets-encrypt:install:certificate --domainName=<domain>
-#   4. Deploy pubkey appended  : echo "ssh-ed25519 ..." >> /home/<vps_user>/.ssh/authorized_keys
+#   2. SSL cert installed      : clpctl lets-encrypt:install:certificate --domainName=<domain>
+#   3. Deploy pubkey appended  : echo "ssh-ed25519 ..." >> /home/<vps_user>/.ssh/authorized_keys
 #
-# Required repo secrets:
-#   CODENZIA_PAT      — composer-auth for private Codenzia packages
-#   VPS_HOSTNAME      — VPS IP or hostname (e.g. 31.97.78.215)
-#   VPS_PORT          — SSH port (typically 22)
-#   VPS_SSH_KEY       — private key matching the pubkey added to authorized_keys
-#   VPS_USER          — CloudPanel site user (e.g. task-off)
-#   MYSQL_DATABASE    — database name
-#   MYSQL_USERNAME    — database user
-#   MYSQL_PASSWORD    — database password
+# DB: SQLite at /home/<user>/htdocs/<domain>/database/database.sqlite — workflow
+# auto-creates the file on first deploy. No MySQL provisioning required.
+#
+# Required repo secrets (shared across all caller workflows):
+#   CODENZIA_PAT  — composer-auth for private Codenzia packages
+#   VPS_HOSTNAME  — VPS IP or hostname (e.g. 31.97.78.215)
+#   VPS_PORT      — SSH port (typically 22)
+#   VPS_SSH_KEY   — private key matching the pubkey added to authorized_keys
 
 on:
   workflow_call:
@@ -84,14 +82,6 @@ on:
         description: "CloudPanel site user that owns /home/<user>/htdocs/<domain>"
         required: true
         type: string
-      mysql_database:
-        description: "MySQL database name"
-        required: true
-        type: string
-      mysql_username:
-        description: "MySQL username (often same as database name)"
-        required: true
-        type: string
     secrets:
       CODENZIA_PAT:
         required: false
@@ -100,8 +90,6 @@ on:
       VPS_PORT:
         required: false
       VPS_SSH_KEY:
-        required: false
-      MYSQL_PASSWORD:
         required: false
 
 jobs:
@@ -291,15 +279,17 @@ jobs:
           VPS_USER: ${{ inputs.vps_user }}
           VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
-          MYSQL_DATABASE: ${{ inputs.mysql_database }}
-          MYSQL_USERNAME: ${{ inputs.mysql_username }}
-          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
         run: |
           ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" bash -s <<EOF
           set -euo pipefail
-          cd "/home/${VPS_USER}/htdocs/${DOMAIN}"
+          ROOT="/home/${VPS_USER}/htdocs/${DOMAIN}"
+          cd "\$ROOT"
+
+          # Ensure SQLite home exists.
+          mkdir -p database
+          touch database/database.sqlite
 
           # Seed .env on first deploy.
           if [ ! -f .env ]; then
@@ -317,17 +307,12 @@ jobs:
           LOG_CHANNEL=daily
           LOG_LEVEL=warning
 
-          DB_CONNECTION=mysql
-          DB_HOST=127.0.0.1
-          DB_PORT=3306
-          DB_DATABASE=${MYSQL_DATABASE}
-          DB_USERNAME=${MYSQL_USERNAME}
-          DB_PASSWORD=${MYSQL_PASSWORD}
+          DB_CONNECTION=sqlite
+          DB_DATABASE=\$ROOT/database/database.sqlite
 
           CACHE_DRIVER=file
           SESSION_DRIVER=file
           QUEUE_CONNECTION=database
-          REDIS_HOST=127.0.0.1
 
           CONSOLE_USER=admin
           CONSOLE_PASSWORD=\$CPW
