@@ -339,9 +339,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          CODE=\$(curl -s -o /dev/null -w '%{http_code}' "https://${DOMAIN}/up" || true)
-          if [ "\$CODE" != "200" ]; then
-            echo "::warning::smoke test got \$CODE on https://${DOMAIN}/up (might be OK if app has no /up route)"
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' "https://${DOMAIN}/up" || true)
+          if [ "$CODE" != "200" ]; then
+            echo "::warning::smoke test got $CODE on https://${DOMAIN}/up (might be OK if app has no /up route)"
           else
             echo "smoke test green"
           fi
