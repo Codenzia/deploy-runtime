@@ -180,7 +180,7 @@ jobs:
               json.dump(cj, f, indent=4); f.write('\n')
           PY
 
-      - name: Ensure Laravel storage subdirs exist (gitignored on most apps)
+      - name: Ensure Laravel storage + views subdirs exist (gitignored on most apps)
         run: |
           mkdir -p storage/framework/cache/data
           mkdir -p storage/framework/sessions
@@ -188,6 +188,7 @@ jobs:
           mkdir -p storage/framework/testing
           mkdir -p storage/logs
           mkdir -p bootstrap/cache
+          mkdir -p resources/views
 
       - name: Create placeholder SQLite DB for boot-time package discovery
         # composer install's post-autoload-dump runs `php artisan package:discover`,
