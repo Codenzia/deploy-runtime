@@ -336,6 +336,8 @@ jobs:
           fi
 
           php artisan storage:link || true
+          php artisan vendor:publish --tag=livewire:assets --force 2>/dev/null || true
+          php artisan vendor:publish --tag=filament-assets --force 2>/dev/null || true
           php artisan config:cache || true
           php artisan route:cache || true
           php artisan view:cache || true
