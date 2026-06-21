@@ -201,7 +201,7 @@ jobs:
 
       - name: Install PHP dependencies (prod)
         env:
-          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.CODENZIA_PAT }}"}}'
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.CODENZIA_PAT }}"},"http-basic":{"packages.codenzia.com":{"username":"${{ secrets.SATIS_USER }}","password":"${{ secrets.SATIS_PASS }}"}}}'
         run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
 
       - name: Build frontend assets
@@ -298,6 +298,8 @@ jobs:
             CPW="\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)"
             APP_ENV=\$([ "${MODE}" = "release" ] && echo production || echo local)
             APP_DEBUG=\$([ "${MODE}" = "release" ] && echo false || echo true)
+            # HTTPS-served prod hosts must mark the session cookie Secure.
+            SESSION_SECURE=\$([ "${MODE}" = "release" ] && echo true || echo false)
             cat > .env <<INNER
           APP_NAME="${APP_NAME}"
           APP_ENV=\$APP_ENV
@@ -313,6 +315,7 @@ jobs:
 
           CACHE_DRIVER=file
           SESSION_DRIVER=file
+          SESSION_SECURE_COOKIE=\$SESSION_SECURE
           QUEUE_CONNECTION=database
 
           CONSOLE_USER=admin
