@@ -379,6 +379,32 @@ jobs:
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" "mkdir -p \"${APPS}/releases/${REL}\""
           rsync -az --delete -e "ssh -p $HOST_PORT" _artifact/ "${HOST_USER}@${HOST_HOSTNAME}:${APPS}/releases/${REL}/"
 
+      - name: Enforce secure session cookie on release
+        if: ${{ inputs.mode == 'release' }}
+        env:
+          HOST_USER: ${{ secrets.HOST_USER }}
+          HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+        run: |
+          # Production is served over HTTPS, so the session cookie must carry
+          # the Secure flag. shared/.env is seeded by hand on first deploy and
+          # may omit it — guarantee it here (idempotent) before activation so
+          # deploy.sh's config:cache picks it up. Runs only on release mode.
+          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<EOF
+          set -euo pipefail
+          ENV_FILE="domains/${DOMAIN}/apps/shared/.env"
+          if [ ! -f "\$ENV_FILE" ]; then
+            echo "warning: \$ENV_FILE not found yet (seed shared/.env first); skipping"
+            exit 0
+          fi
+          if grep -q '^SESSION_SECURE_COOKIE=' "\$ENV_FILE"; then
+            sed -i 's/^SESSION_SECURE_COOKIE=.*/SESSION_SECURE_COOKIE=true/' "\$ENV_FILE"
+          else
+            printf '\nSESSION_SECURE_COOKIE=true\n' >> "\$ENV_FILE"
+          fi
+          echo "→ SESSION_SECURE_COOKIE=true ensured in \$ENV_FILE"
+          EOF
+
       - name: Activate release
         env:
           HOST_USER: ${{ secrets.HOST_USER }}
