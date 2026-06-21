@@ -191,7 +191,11 @@ jobs:
           if [ -n "$ALIAS_BUMP" ]; then
             echo "::group::Mirror branch-alias to dev/$DEV_BRANCH"
             git fetch --quiet dev "$DEV_BRANCH"
-            git checkout -B release-alias-bump "dev/$DEV_BRANCH"
+            # -f: the `git rm --cached release.yml` above left release.yml untracked
+            # on disk; without force this checkout aborts ("untracked working tree
+            # files would be overwritten"). Switching to dev's tree restores the
+            # identical tracked copy, so discarding the untracked one is safe.
+            git checkout -f -B release-alias-bump "dev/$DEV_BRANCH"
             DEV_CURRENT_ALIAS=$(jq -r '.extra["branch-alias"]["dev-main"] // ""' composer.json)
             if [ "$DEV_CURRENT_ALIAS" != "$ALIAS_BUMP" ]; then
               jq --indent 4 --arg a "$ALIAS_BUMP" \
