@@ -349,6 +349,7 @@ jobs:
           REMOTE_SCRIPT=$(cat <<EOF
             set -euo pipefail
             APPS="domains/${DOMAIN}/apps"
+            RUNTIME="\$HOME/codenzia/deploy-runtime"
 
             if [ ! -d "domains/${DOMAIN}" ]; then
               echo "FATAL: domains/${DOMAIN}/ does not exist on the host."       >&2
@@ -356,19 +357,30 @@ jobs:
               exit 1
             fi
 
+            # Keep the host's deploy-runtime clone current so fixes to deploy.sh
+            # propagate on EVERY deploy, not just first provision.
+            if [ -d "\$RUNTIME/.git" ]; then
+              git -C "\$RUNTIME" pull --ff-only --quiet || echo "warn: could not fast-forward \$RUNTIME"
+            fi
+
             if [ -x "\${APPS}/deploy.sh" ]; then
-              echo "→ \${APPS}/deploy.sh exists; provision step skipped (already provisioned)"
+              # Already provisioned — just refresh deploy.sh from the clone so
+              # script changes take effect without a full re-provision.
+              if [ -f "\$RUNTIME/deploy.sh" ]; then
+                install -m 0750 "\$RUNTIME/deploy.sh" "\${APPS}/deploy.sh"
+                echo "→ refreshed \${APPS}/deploy.sh from \$RUNTIME/deploy.sh"
+              fi
               exit 0
             fi
 
-            if [ ! -x "\$HOME/codenzia/deploy-runtime/provision-app.sh" ]; then
+            if [ ! -x "\$RUNTIME/provision-app.sh" ]; then
               echo "FATAL: \$HOME/codenzia/deploy-runtime/provision-app.sh not found." >&2
               echo "       Clone Codenzia/deploy-runtime to ~/codenzia/deploy-runtime first." >&2
               exit 1
             fi
 
             echo "→ Provisioning ${APP_NAME} on ${DOMAIN} (first deploy)"
-            bash "\$HOME/codenzia/deploy-runtime/provision-app.sh" "${APP_NAME}" "${DOMAIN}"
+            bash "\$RUNTIME/provision-app.sh" "${APP_NAME}" "${DOMAIN}"
             echo "→ Provision done. NEXT: seed shared/.env (APP_KEY + DB path + secrets) and add the cron lines printed above in hPanel."
           EOF
           )
