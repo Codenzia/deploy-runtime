@@ -29,6 +29,7 @@ FRESH="${FRESH:-false}"
 MODE="${MODE:-release}"
 MIGRATE="${MIGRATE:-false}"
 DEMO_SEEDER="${DEMO_SEEDER:-DemoSeeder}"
+ALWAYS_SEED="${ALWAYS_SEED:-false}"
 PHP_BIN="${PHP_BIN:-/usr/bin/php}"
 
 DOMAIN_DIR="$HOME/domains/$DOMAIN"
@@ -289,6 +290,14 @@ if [ "$FRESH" = "true" ]; then
     esac
 else
     "$PHP_BIN" artisan migrate --force
+    # Opt-in: re-run the (idempotent) seeder on every deploy. For our own
+    # single-source-of-truth sites whose content lives in the seeder, this
+    # keeps prod in sync with the committed catalogue without a destructive
+    # FRESH. Off by default so customer/stateful apps are never reseeded.
+    if [ "$ALWAYS_SEED" = "true" ]; then
+        echo "ALWAYS_SEED=true → db:seed --class=$DEMO_SEEDER --force (idempotent, non-destructive)"
+        "$PHP_BIN" artisan db:seed --class="$DEMO_SEEDER" --force
+    fi
 fi
 
 # Wipe every cache (config / route / view / event / compiled) before

@@ -47,10 +47,15 @@ on:
         type: string
         default: ""
       demo_seeder:
-        description: "Seeder class invoked when fresh=true"
+        description: "Seeder class invoked when fresh=true (and on every deploy when always_seed=true)"
         required: false
         type: string
         default: "DemoSeeder"
+      always_seed:
+        description: "Re-run the idempotent seeder (demo_seeder) on every deploy, without a destructive fresh. For our own seeder-as-source-of-truth sites."
+        required: false
+        type: boolean
+        default: false
       php_bin:
         description: "Absolute path to the PHP binary on the host"
         required: false
@@ -127,6 +132,7 @@ jobs:
       APP_NAME: ${{ inputs.app_name }}
       DOMAIN: ${{ inputs.domain }}
       DEMO_SEEDER: ${{ inputs.demo_seeder }}
+      ALWAYS_SEED: ${{ inputs.always_seed }}
       PHP_BIN: ${{ inputs.php_bin }}
     defaults:
       run:
@@ -413,9 +419,10 @@ jobs:
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
           MIGRATE: ${{ inputs.migrate }}
+          ALWAYS_SEED: ${{ inputs.always_seed }}
         run: |
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
-            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' MIGRATE='${MIGRATE}' DEMO_SEEDER='${DEMO_SEEDER}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' MIGRATE='${MIGRATE}' DEMO_SEEDER='${DEMO_SEEDER}' ALWAYS_SEED='${ALWAYS_SEED}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
 
       - name: Smoke test
         working-directory: ${{ github.workspace }}
