@@ -97,8 +97,23 @@ case "$DB" in
             echo "      fill DB_HOST/DB_DATABASE/DB_USERNAME/DB_PASSWORD (create the DB in CloudPanel UI)." >&2
         fi
         ;;
+    pgsql)
+        # PostgreSQL isn't a CloudPanel-managed engine — install it on the box
+        # (apt install postgresql php8.3-pgsql) and create the role + DB once,
+        # then put the credentials in shared/.env. See VPS-DEPLOY-RUNBOOK.md.
+        echo "DB=pgsql → DB_CONNECTION=pgsql (expects DB_HOST/PORT/DATABASE/USERNAME/PASSWORD already in shared/.env)"
+        if grep -q '^DB_CONNECTION=' "$ENV_FILE"; then
+            sed -i "s|^DB_CONNECTION=.*|DB_CONNECTION=pgsql|" "$ENV_FILE"
+        else
+            echo "DB_CONNECTION=pgsql" >> "$ENV_FILE"
+        fi
+        if ! grep -q '^DB_DATABASE=.\+' "$ENV_FILE" || grep -q "^DB_DATABASE=$DB_FILE" "$ENV_FILE"; then
+            echo "WARN: DB=pgsql but shared/.env has no PostgreSQL DB_DATABASE — migrations will fail until you" >&2
+            echo "      fill DB_HOST/DB_PORT/DB_DATABASE/DB_USERNAME/DB_PASSWORD (create the role + DB on the host)." >&2
+        fi
+        ;;
     *)
-        echo "FATAL: unknown DB='$DB' (expected 'sqlite' or 'mysql')" >&2
+        echo "FATAL: unknown DB='$DB' (expected 'sqlite', 'mysql' or 'pgsql')" >&2
         exit 1
         ;;
 esac
@@ -141,6 +156,20 @@ backup_db() {
                 | gzip -c > "$BACKUPS/pre-$1-$stamp.sql.gz" \
                 && echo "  backup → $BACKUPS/pre-$1-$stamp.sql.gz" \
                 || echo "  WARN: mysqldump backup failed (check credentials)"
+        fi
+    elif [ "$DB" = "pgsql" ]; then
+        # Best-effort logical dump using the app's own .env credentials.
+        local host port db user pass
+        host="$(grep -E '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)"
+        port="$(grep -E '^DB_PORT=' "$ENV_FILE" | cut -d= -f2-)"
+        db="$(grep -E '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)"
+        user="$(grep -E '^DB_USERNAME=' "$ENV_FILE" | cut -d= -f2-)"
+        pass="$(grep -E '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
+        if command -v pg_dump >/dev/null 2>&1 && [ -n "$db" ]; then
+            PGPASSWORD="$pass" pg_dump -h "${host:-127.0.0.1}" -p "${port:-5432}" -U "$user" "$db" 2>/dev/null \
+                | gzip -c > "$BACKUPS/pre-$1-$stamp.sql.gz" \
+                && echo "  backup → $BACKUPS/pre-$1-$stamp.sql.gz" \
+                || echo "  WARN: pg_dump backup failed (check credentials)"
         fi
     fi
     ls -1t "$BACKUPS"/pre-"$1"-* 2>/dev/null | tail -n +6 | xargs -r rm -f

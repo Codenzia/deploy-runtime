@@ -27,7 +27,7 @@ Each app needs just **two files** in its own repo:
 }
 ```
 Optional per-target keys: `seeder` (default `DatabaseSeeder`), `db` (`sqlite`
-default | `mysql`).
+default | `mysql` | `pgsql`).
 
 **2. `.github/workflows/deploy-vps.yml`** — copy task-off's caller, change
 `app_name`, the `target` choice options, and `siblings` if used.
@@ -79,6 +79,23 @@ stdout_logfile=/home/<site-user>/htdocs/<domain>/shared/storage/logs/worker.log
 * * * * * cd /home/<site-user>/htdocs/<domain>/current && php8.3 artisan schedule:run >> ../shared/storage/logs/schedule.log 2>&1
 ```
 
+### E½. (PostgreSQL targets only) install Postgres + create the role/DB
+CloudPanel manages MySQL, not Postgres — so a `db: pgsql` app needs Postgres
+installed on the box once, plus the PHP driver. As root:
+```bash
+sudo apt install -y postgresql php8.3-pgsql
+sudo systemctl enable --now postgresql
+sudo -u postgres psql <<'SQL'
+CREATE ROLE <app> WITH LOGIN PASSWORD '<strong-password>';
+CREATE DATABASE <app> OWNER <app>;
+SQL
+```
+Then in `shared/.env`: `DB_CONNECTION=pgsql`, `DB_HOST=127.0.0.1`,
+`DB_PORT=5432`, `DB_DATABASE=<app>`, `DB_USERNAME=<app>`, `DB_PASSWORD=<…>`.
+(Restart the site's php-fpm pool after installing `php8.3-pgsql` so the
+`pdo_pgsql` driver loads.) The activator sets `DB_CONNECTION=pgsql` and
+takes a `pg_dump` backup before every migrate.
+
 ### E. (Optional) let deploys reload php-fpm + flush Varnish
 The deploy runs as the unprivileged site user. Without this it relies on
 opcache realpath invalidation (works, but a reload is cleaner). Grant
@@ -102,7 +119,7 @@ gh secret set CODENZIA_PAT -R Codenzia/<repo> --body "<PAT repo scope>"
 ## Running a deploy
 GitHub → repo → Actions → **Deploy (VPS)** → Run workflow:
 - **target**: production / demo / … (mapped via `deploy/targets.json`)
-- **db**: `sqlite` (default) or `mysql`
+- **db**: `sqlite` (default), `mysql`, or `pgsql`
 - **fresh**: `true` only to wipe + reseed (DESTRUCTIVE; auto-backs up first)
 - **adopt**: `true` on the very first deploy over an existing non-atomic site
 
