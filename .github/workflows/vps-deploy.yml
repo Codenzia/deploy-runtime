@@ -96,6 +96,10 @@ on:
     secrets:
       CODENZIA_PAT:
         required: false
+      SATIS_USER:
+        required: false
+      SATIS_PASS:
+        required: false
       VPS_HOST:
         required: false
       VPS_PORT:
@@ -147,12 +151,21 @@ jobs:
       - name: Authenticate Composer to GitHub (private VCS repos)
         env:
           GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+          SATIS_USER: ${{ secrets.SATIS_USER }}
+          SATIS_PASS: ${{ secrets.SATIS_PASS }}
         run: |
           if [ -n "$GH_TOKEN" ]; then
             composer config --global github-oauth.github.com "$GH_TOKEN"
             echo "composer github-oauth configured"
           else
             echo "WARN: CODENZIA_PAT empty — private Composer repos will fail to resolve" >&2
+          fi
+          # Apps that resolve Codenzia packages from the Satis registry
+          # (repositories: packages.codenzia.com in their composer.json) need
+          # http-basic auth for the metadata. Optional — skipped when unset.
+          if [ -n "$SATIS_USER" ] && [ -n "$SATIS_PASS" ]; then
+            composer config --global http-basic.packages.codenzia.com "$SATIS_USER" "$SATIS_PASS"
+            echo "composer http-basic for packages.codenzia.com configured"
           fi
 
       - name: Clone sibling Composer packages (optional path repos)
