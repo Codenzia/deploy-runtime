@@ -56,28 +56,17 @@ sudo chown -R <site-user>:<site-user> /home/<site-user>/.ssh
 sudo chmod 700 /home/<site-user>/.ssh && sudo chmod 600 /home/<site-user>/.ssh/authorized_keys
 ```
 
-### C. Queue worker (supervisor — root, one-time on the box)
+### C. Queue worker (supervisor) + scheduler cron — one script, root, once
+The deploy runs as the unprivileged site user, so it can't install packages,
+write `/etc/supervisor`, or touch systemd. Those are one-time root steps — run
+the helper the pipeline already shipped to `htdocs/<domain>/.deploy/`:
 ```bash
-sudo apt install -y supervisor && sudo systemctl enable --now supervisor
+sudo bash /home/<site-user>/htdocs/<domain>/.deploy/vps-worker-setup.sh <app> <domain> <site-user>
 ```
-Then per app (`/etc/supervisor/conf.d/<app>-worker.conf`):
-```ini
-[program:<app>-worker]
-command=php8.3 /home/<site-user>/htdocs/<domain>/current/artisan queue:work --sleep=1 --tries=3 --max-time=3600
-user=<site-user>
-numprocs=1
-autostart=true
-autorestart=true
-redirect_stderr=true
-stdout_logfile=/home/<site-user>/htdocs/<domain>/shared/storage/logs/worker.log
-```
-`sudo supervisorctl reread && sudo supervisorctl update`. The deploy calls
-`php artisan queue:restart`, which supervisor-managed workers honour.
-
-### D. Scheduler (cron — as the site user)
-```cron
-* * * * * cd /home/<site-user>/htdocs/<domain>/current && php8.3 artisan schedule:run >> ../shared/storage/logs/schedule.log 2>&1
-```
+It installs supervisor (once per box), writes `<app>-worker.conf`, starts the
+worker, and installs the site user's `schedule:run` cron. Idempotent — re-run
+any time. The deploy calls `php artisan queue:restart`, which the supervised
+worker honours, so new releases pick up automatically.
 
 ### E½. (PostgreSQL targets only) install Postgres + create the role/DB
 CloudPanel manages MySQL, not Postgres — so a `db: pgsql` app needs Postgres

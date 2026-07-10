@@ -276,7 +276,7 @@ jobs:
 
           # Push the current host scripts (single source of truth = this checkout).
           ssh -p "$PORT" "$DEST" "mkdir -p \"${SITE_DIR}/.deploy\""
-          scp -P "$PORT" deploy-runtime/vps-provision.sh deploy-runtime/vps-deploy.sh \
+          scp -P "$PORT" deploy-runtime/vps-provision.sh deploy-runtime/vps-deploy.sh deploy-runtime/vps-worker-setup.sh \
             "${DEST}:${SITE_DIR}/.deploy/"
           ssh -p "$PORT" "$DEST" "chmod 0750 \"${SITE_DIR}/.deploy/\"*.sh"
 
