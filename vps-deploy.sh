@@ -124,13 +124,21 @@ case "$MODE" in
         sed -i 's/^APP_DEBUG=.*/APP_DEBUG=true/' "$ENV_FILE"
         sed -i 's/^APP_ENV=.*/APP_ENV=local/'    "$ENV_FILE"
         ;;
+    demo)
+        # Public demo running fake integration drivers (e.g. DARI's fake Sanad
+        # auth). NOT production — so apps that fail-closed on fake-driver-in-
+        # production still boot — but APP_DEBUG stays off so no stack traces leak.
+        echo "MODE=demo → APP_ENV=demo APP_DEBUG=false"
+        sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/' "$ENV_FILE"
+        sed -i 's/^APP_ENV=.*/APP_ENV=demo/'      "$ENV_FILE"
+        ;;
     release|"")
         echo "MODE=release → APP_ENV=production APP_DEBUG=false"
         sed -i 's/^APP_DEBUG=.*/APP_DEBUG=false/'  "$ENV_FILE"
         sed -i 's/^APP_ENV=.*/APP_ENV=production/'  "$ENV_FILE"
         ;;
     *)
-        echo "FATAL: unknown MODE='$MODE' (expected 'release' or 'debug')" >&2
+        echo "FATAL: unknown MODE='$MODE' (expected 'release', 'demo' or 'debug')" >&2
         exit 1
         ;;
 esac

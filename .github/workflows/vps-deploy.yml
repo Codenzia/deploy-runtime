@@ -58,7 +58,7 @@ on:
         type: string
         default: "DatabaseSeeder"
       mode:
-        description: "release or debug"
+        description: "release (APP_ENV=production) | demo (APP_ENV=demo, debug off) | debug (APP_ENV=local, debug on)"
         required: false
         type: string
         default: "release"
