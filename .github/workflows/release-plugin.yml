@@ -239,3 +239,37 @@ jobs:
           else
             echo "::warning::Satis dispatch failed; nightly rebuild will catch this release."
           fi
+
+      - name: Wait for Satis to publish the release
+        # After dispatching the rebuild, wait for the Satis "Build & deploy" run
+        # to finish so the new version is actually live on packages.codenzia.com
+        # by the time this release completes — consumers can `composer update`
+        # immediately instead of racing the ~6-min FTPS deploy. Uses CODENZIA_PAT
+        # (no extra secret; queries the satis run rather than the auth-gated
+        # catalog). Non-fatal: a timeout just falls back to the nightly rebuild.
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::CODENZIA_PAT empty; not waiting for Satis."
+            exit 0
+          fi
+          echo "Waiting for the Satis rebuild to finish (up to ~12 min)…"
+          for i in $(seq 1 48); do
+            sleep 15
+            JSON=$(gh run list --repo Codenzia/satis --workflow "Build & deploy Satis" \
+                     --event repository_dispatch --limit 1 \
+                     --json status,conclusion,createdAt 2>/dev/null || echo '[]')
+            CREATED=$(echo "$JSON" | jq -r '.[0].createdAt // empty')
+            STATUS=$(echo "$JSON" | jq -r '.[0].status // empty')
+            [ -z "$CREATED" ] && continue
+            AGE=$(( $(date -u +%s) - $(date -u -d "$CREATED" +%s) ))
+            # Only trust a run that started during this release (< 15 min old).
+            if [ "$AGE" -lt 900 ] && [ "$STATUS" = "completed" ]; then
+              echo "Satis rebuild finished (${AGE}s old); the release is live on packages.codenzia.com."
+              exit 0
+            fi
+            echo "  …still building (status=${STATUS:-none}, age=${AGE}s)"
+          done
+          echo "::warning::Timed out waiting for the Satis rebuild; it will be live shortly or via the nightly cron."
