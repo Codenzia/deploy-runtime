@@ -8,6 +8,10 @@
 #   DB       "sqlite" (default) or "mysql" — sets DB_CONNECTION in shared/.env
 #   FRESH    "true" to migrate:fresh + reseed (default "false")
 #   SEEDER   seeder class for FRESH path (default "DatabaseSeeder")
+#   ALWAYS_SEED  "true" to also run the (idempotent) seeder on the NORMAL
+#                (non-FRESH) path every deploy (default "false")
+#   SYNC_SUPERADMIN  "true" (default) to sync super-admin creds from env via
+#                    `superadmin:ensure --from-env`; soft-fails on older apps
 #   MODE     "release" (default; APP_ENV=production, APP_DEBUG=false)
 #            "debug"   (APP_ENV=local, APP_DEBUG=true)
 #   PHP_BIN  php binary (default: php8.3 || php)
@@ -29,6 +33,8 @@ set -euo pipefail
 DB="${DB:-sqlite}"
 FRESH="${FRESH:-false}"
 SEEDER="${SEEDER:-DatabaseSeeder}"
+ALWAYS_SEED="${ALWAYS_SEED:-false}"
+SYNC_SUPERADMIN="${SYNC_SUPERADMIN:-true}"
 MODE="${MODE:-release}"
 PHP_BIN="${PHP_BIN:-$(command -v php8.3 || command -v php || echo /usr/bin/php)}"
 
@@ -191,6 +197,23 @@ if [ "$FRESH" = "true" ]; then
 else
     backup_db deploy
     "$PHP_BIN" artisan migrate --force
+    # Opt-in: re-run the (idempotent) seeder on every deploy. For our own
+    # single-source-of-truth sites whose content lives in the seeder, this
+    # keeps prod in sync with the committed catalogue without a destructive
+    # FRESH. Off by default so customer/stateful apps are never reseeded.
+    if [ "$ALWAYS_SEED" = "true" ]; then
+        echo "ALWAYS_SEED=true → db:seed --class=$SEEDER --force (idempotent, non-destructive)"
+        "$PHP_BIN" artisan db:seed --class="$SEEDER" --force
+    fi
+fi
+
+# --- Sync super-admin credentials from env --------------------------------
+# Apply SUPER_ADMIN_EMAIL/PASSWORD (config) to the protected account so the
+# owner can always log in. Soft-fail: apps on older laravel-superadmin
+# versions (no --from-env flag) or without the package deploy fine.
+# SYNC_SUPERADMIN=false lets an app opt out entirely.
+if [ "$SYNC_SUPERADMIN" = "true" ]; then
+    "$PHP_BIN" artisan superadmin:ensure --from-env --no-interaction || echo "superadmin sync skipped (command/flag unavailable)"
 fi
 
 # --- Rebuild caches -------------------------------------------------------

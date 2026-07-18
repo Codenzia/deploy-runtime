@@ -52,3 +52,27 @@ zero-downtime symlink swap the Capistrano pattern gives you.
 3. Hostinger cron jobs (added once per app via hPanel) run `schedule:run`
    and the queue cron-loop (`queue:work --stop-when-empty --max-time=55`),
    both `cd ~/domains/<sub>/public_html` so they reference the live tree.
+
+## CloudPanel vhost — REQUIRED for Livewire v4 apps
+
+Applies to the Hostinger **KVM VPS** (CloudPanel), not the Cloud Startup
+host above. When you create a new site in the CloudPanel UI for any
+Livewire v4 / Filament app, you **must** paste
+[`templates/cloudpanel-vhost-laravel.conf`](templates/cloudpanel-vhost-laravel.conf)
+into **Sites → &lt;site&gt; → Vhost** (replace `{{server_name}}` with the
+domain; leave every other `{{…}}` token untouched).
+
+CloudPanel's stock 443 server serves `*.js` / `*.css` straight off disk and
+hard-404s missing files. Livewire v4 and Filament serve their runtime JS/CSS
+through **dynamic Laravel routes** (`/livewire/livewire.min.js`,
+`/livewire-<hash>/livewire.min.js`, …) that have no file on disk, so nginx
+404s them before Laravel is reached — silently breaking every Livewire form
+and Filament panel on the site. The template fixes this by adding
+`try_files $uri @laravel;` to the static-asset block plus a named
+`location @laravel { … }` that proxies the miss back to Laravel.
+
+CloudPanel vhosts are root-owned, so CI cannot patch this automatically. The
+`vps-deploy.yml` workflow runs a **non-fatal post-deploy health check** that
+loads the homepage, finds the Livewire script tag, and warns in the Actions
+log if that script does not return HTTP 200 — a reminder to paste the
+template on a site where it's still missing.

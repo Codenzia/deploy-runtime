@@ -53,10 +53,20 @@ on:
         type: boolean
         default: false
       seeder:
-        description: "Seeder class invoked when fresh=true"
+        description: "Seeder class invoked when fresh=true (and when always_seed=true)"
         required: false
         type: string
         default: "DatabaseSeeder"
+      always_seed:
+        description: "Re-run the (idempotent) seeder on every deploy, non-destructively"
+        required: false
+        type: boolean
+        default: false
+      sync_superadmin:
+        description: "Sync super-admin creds from env each deploy (soft-fails on older apps)"
+        required: false
+        type: boolean
+        default: true
       mode:
         description: "release (APP_ENV=production) | demo (APP_ENV=demo, debug off) | debug (APP_ENV=local, debug on)"
         required: false
@@ -315,11 +325,13 @@ jobs:
           VPS_PORT: ${{ secrets.VPS_PORT }}
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
+          ALWAYS_SEED: ${{ inputs.always_seed }}
+          SYNC_SUPERADMIN: ${{ inputs.sync_superadmin }}
         run: |
           PORT="${VPS_PORT:-22}"
           DEST="${SITE_USER}@${VPS_HOST}"
           ssh -p "$PORT" "$DEST" \
-            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' DB='${DB}' FRESH='${FRESH}' MODE='${MODE}' SEEDER='${SEEDER}' PHP_BIN='${PHP_BIN}' bash \"htdocs/${DOMAIN}/.deploy/vps-deploy.sh\""
+            "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' DB='${DB}' FRESH='${FRESH}' MODE='${MODE}' SEEDER='${SEEDER}' ALWAYS_SEED='${ALWAYS_SEED}' SYNC_SUPERADMIN='${SYNC_SUPERADMIN}' PHP_BIN='${PHP_BIN}' bash \"htdocs/${DOMAIN}/.deploy/vps-deploy.sh\""
 
       - name: Smoke test
         working-directory: ${{ github.workspace }}
@@ -334,3 +346,29 @@ jobs:
              && test -L \"htdocs/${DOMAIN}/current/.env\""
           curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "https://${DOMAIN}/up" \
             || echo "warning: /up smoke failed (TLS/DNS/doc-root may not be ready yet)"
+
+      - name: Livewire asset health check
+        working-directory: ${{ github.workspace }}
+        run: |
+          # Non-fatal: verify the Livewire runtime JS actually loads. CloudPanel's
+          # stock vhost 404s dynamic .js routes (see templates/cloudpanel-vhost-
+          # laravel.conf); this catches a site whose vhost still lacks the fix.
+          HTML="$(curl -fsSL --max-time 20 "https://${DOMAIN}/" || true)"
+          SCRIPT_URL="$(printf '%s' "$HTML" \
+            | grep -oiE 'src="[^"]*livewire[^"]*\.min\.js[^"]*"' \
+            | head -n1 | sed -E 's/^src="//I; s/"$//' || true)"
+          if [ -z "$SCRIPT_URL" ]; then
+            echo "No Livewire script tag on homepage — skipping (non-Livewire app)."
+            exit 0
+          fi
+          case "$SCRIPT_URL" in
+            http*) : ;;
+            /*)    SCRIPT_URL="https://${DOMAIN}${SCRIPT_URL}" ;;
+            *)     SCRIPT_URL="https://${DOMAIN}/${SCRIPT_URL}" ;;
+          esac
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 20 "$SCRIPT_URL" || echo 000)"
+          if [ "$CODE" = "200" ]; then
+            echo "Livewire script OK (HTTP 200): $SCRIPT_URL"
+          else
+            echo "::warning::Livewire script $SCRIPT_URL returned $CODE — the CloudPanel vhost is likely missing the try_files fallback; paste templates/cloudpanel-vhost-laravel.conf (see README)."
+          fi
