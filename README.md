@@ -76,3 +76,33 @@ CloudPanel vhosts are root-owned, so CI cannot patch this automatically. The
 loads the homepage, finds the Livewire script tag, and warns in the Actions
 log if that script does not return HTTP 200 — a reminder to paste the
 template on a site where it's still missing.
+
+## Queue worker — REQUIRED for apps with async jobs
+
+Any app whose `QUEUE_CONNECTION` is not `sync` (notifications, mail, etc.) needs
+a supervised `queue:work` worker. That worker is installed **once per site, as
+root**, by `vps-worker-setup.sh` (supervisor program + `schedule:run` cron) — it
+is deliberately **not** part of `vps-deploy.sh`, which runs as the unprivileged
+site user and cannot write `/etc/supervisor` or touch systemd.
+
+Because that step is separate, a freshly provisioned site can end up with a
+scheduler cron but no worker, silently stockpiling jobs (this is exactly what
+happened to `dari.codenzia.com`). To make that impossible to miss, every deploy
+now runs a **queue worker health check** post-activation:
+
+- Detects whether a `queue:work` worker is running for this site.
+- If absent and `QUEUE_CONNECTION != sync`: prints a loud `WARNING`, emits a
+  GitHub Actions `::warning::` annotation with the exact
+  `sudo bash …/vps-worker-setup.sh <app> <domain> <site-user> <php>` command,
+  and adds a **Queue worker health** table (worker state + pending-job count) to
+  the run summary.
+- Never fails the deploy.
+
+**Opt-in hands-off setup:** grant the site user a NOPASSWD sudoers entry for the
+worker-setup script and the deploy will auto-install the worker whenever it's
+missing (`sudo -n`, idempotent):
+```
+<site-user> ALL=(root) NOPASSWD: /usr/bin/bash /home/<site-user>/htdocs/<domain>/.deploy/vps-worker-setup.sh *
+```
+Without it, `sudo -n` fails fast and the deploy just warns — nothing is forced.
+See [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md) § "Queue worker" for details.

@@ -372,3 +372,49 @@ jobs:
           else
             echo "::warning::Livewire script $SCRIPT_URL returned $CODE — the CloudPanel vhost is likely missing the try_files fallback; paste templates/cloudpanel-vhost-laravel.conf (see README)."
           fi
+
+      - name: Queue worker health check
+        working-directory: ${{ github.workspace }}
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          # Non-fatal. Reads the health facts vps-deploy.sh recorded on the host
+          # (queue worker presence + pending-job count) and surfaces them in the
+          # job summary. A missing worker means async jobs (notifications, etc.)
+          # never run — the dari.codenzia.com class of bug. See VPS-DEPLOY-RUNBOOK.
+          PORT="${VPS_PORT:-22}"
+          DEST="${SITE_USER}@${VPS_HOST}"
+          HEALTH="$(ssh -p "$PORT" "$DEST" "cat \"htdocs/${DOMAIN}/.deploy/health.env\" 2>/dev/null" || true)"
+          if [ -z "$HEALTH" ]; then
+            echo "No health.env on host (older vps-deploy.sh, or worker check skipped) — nothing to summarise."
+            exit 0
+          fi
+          get() { printf '%s\n' "$HEALTH" | grep -E "^$1=" | head -n1 | cut -d= -f2-; }
+          QUEUE_CONNECTION="$(get QUEUE_CONNECTION)"
+          WORKER_STATE="$(get WORKER_STATE)"
+          BACKLOG="$(get BACKLOG)"
+          WORKER_SETUP_CMD="$(get WORKER_SETUP_CMD)"
+          echo "queue health: connection=${QUEUE_CONNECTION} worker=${WORKER_STATE} backlog=${BACKLOG}"
+          {
+            echo "### Queue worker health — ${APP_NAME} (${DOMAIN})"
+            echo ""
+            echo "| Signal | Value |"
+            echo "| --- | --- |"
+            echo "| Queue connection | \`${QUEUE_CONNECTION}\` |"
+            echo "| Worker | ${WORKER_STATE} |"
+            echo "| Jobs pending | ${BACKLOG} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$WORKER_STATE" = "missing" ]; then
+            {
+              echo ""
+              echo "**No queue worker is running.** Async jobs will not be processed. Run as root on the VPS:"
+              echo ""
+              echo '```'
+              echo "${WORKER_SETUP_CMD}"
+              echo '```'
+              echo ""
+              echo "Or add the one-time NOPASSWD sudoers opt-in for hands-off worker setup — see VPS-DEPLOY-RUNBOOK.md."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::[${APP_NAME}] queue worker MISSING for ${DOMAIN} — run: ${WORKER_SETUP_CMD}"
+          fi

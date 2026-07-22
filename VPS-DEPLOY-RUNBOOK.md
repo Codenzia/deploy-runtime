@@ -68,6 +68,28 @@ worker, and installs the site user's `schedule:run` cron. Idempotent — re-run
 any time. The deploy calls `php artisan queue:restart`, which the supervised
 worker honours, so new releases pick up automatically.
 
+**You no longer have to remember this step.** Every deploy now runs a queue
+worker health check (`vps-deploy.sh`, post-activation): if the app's
+`QUEUE_CONNECTION` is not `sync` and no `queue:work` process is running for the
+site, the deploy prints a loud `WARNING`, emits a GitHub Actions `::warning::`
+annotation, and adds a **Queue worker health** table (worker state + pending
+job count) to the workflow run summary — with the exact `sudo bash …
+vps-worker-setup.sh <app> <domain> <site-user> <php>` command to run. It never
+fails the deploy; it just makes a missing worker impossible to miss.
+
+**Optional hands-off worker setup (opt-in).** If you'd rather the deploy install
+the worker itself the first time it sees one missing, grant the site user a
+NOPASSWD sudoers entry for just the worker-setup script
+(`/etc/sudoers.d/<site-user>-worker`):
+```
+<site-user> ALL=(root) NOPASSWD: /usr/bin/bash /home/<site-user>/htdocs/<domain>/.deploy/vps-worker-setup.sh *
+```
+With that in place the deploy auto-runs `vps-worker-setup.sh` (idempotent) via
+`sudo -n` whenever the worker is absent. Without it, `sudo -n` fails fast and the
+deploy simply prints the warning — nothing is forced. Note: the site user owns
+`.deploy/`, so this grant is root-equivalent on a shared box; only add it on the
+single-tenant fleet VPS we control.
+
 ### E½. (PostgreSQL targets only) install Postgres + create the role/DB
 CloudPanel manages MySQL, not Postgres — so a `db: pgsql` app needs Postgres
 installed on the box once, plus the PHP driver. As root:

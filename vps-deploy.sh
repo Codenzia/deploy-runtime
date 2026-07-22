@@ -254,6 +254,76 @@ else
     echo "Varnish flush skipped (no passwordless sudo / varnishadm)"
 fi
 
+# --- Queue worker health (guard: a site with no worker drops async jobs) --
+# Async work (notifications, etc.) silently piles up if no `queue:work` worker
+# runs. The worker is a supervisor program installed once by vps-worker-setup.sh
+# (needs root) and is deliberately NOT part of this unprivileged deploy — so we
+# DETECT it every deploy and warn loudly (log + GitHub ::warning:: annotation),
+# and optionally auto-install it when a NOPASSWD sudoers grant opts in. This is
+# the guard for the dari.codenzia.com class of bug: scheduler cron present,
+# queue worker never started, notification jobs stuck.
+SITE_USER="$(id -un)"
+WORKER_SCRIPT="$SITE_DIR/.deploy/vps-worker-setup.sh"
+WORKER_SETUP_CMD="sudo bash $WORKER_SCRIPT $APP $DOMAIN $SITE_USER $PHP_BIN"
+HEALTH_FILE="$SITE_DIR/.deploy/health.env"
+
+QUEUE_CONNECTION="$(grep -E '^QUEUE_CONNECTION=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\042\047' | xargs || true)"
+QUEUE_CONNECTION="${QUEUE_CONNECTION:-sync}"
+
+worker_running() {
+    pgrep -f "$CURRENT/artisan queue:work" >/dev/null 2>&1 \
+        || pgrep -f "htdocs/$DOMAIN/current/artisan queue:work" >/dev/null 2>&1
+}
+
+# Best-effort pending-job count on the app's default queue connection. Boots
+# Laravel via its own bootstrap (NOT `artisan tinker` — laravel/tinker is a
+# dev dependency and is absent from the --no-dev production artifact). Soft-fails
+# to "?" so a driver without size() never breaks the deploy.
+backlog_count() {
+    REL_PATH="$R" "$PHP_BIN" -d error_reporting=0 -r '
+        $rel = getenv("REL_PATH");
+        require $rel."/vendor/autoload.php";
+        $app = require $rel."/bootstrap/app.php";
+        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+        try { echo (int) $app->make("queue")->size(); } catch (\Throwable $e) { echo -1; }
+    ' 2>/dev/null | grep -oE '[0-9]+' | tail -n1
+}
+
+WORKER_STATE="not-required"
+BACKLOG="0"
+if [ "$QUEUE_CONNECTION" != "sync" ]; then
+    if worker_running; then WORKER_STATE="running"; else WORKER_STATE="missing"; fi
+    BACKLOG="$(backlog_count || true)"
+    [ -z "$BACKLOG" ] && BACKLOG="?"
+
+    # Optional hands-off setup: only if the site user has a NOPASSWD sudoers
+    # grant for the worker-setup script. `sudo -n` never prompts — it either
+    # runs immediately or fails fast, so this is safe when no grant exists.
+    if [ "$WORKER_STATE" = "missing" ] && [ -f "$WORKER_SCRIPT" ]; then
+        SETUP_LOG="$(mktemp 2>/dev/null || echo /tmp/worker-setup.$$.log)"
+        if sudo -n bash "$WORKER_SCRIPT" "$APP" "$DOMAIN" "$SITE_USER" "$PHP_BIN" >"$SETUP_LOG" 2>&1; then
+            echo "queue worker was missing → auto-installed via NOPASSWD sudo (vps-worker-setup.sh)"
+            sed 's/^/  worker-setup: /' "$SETUP_LOG" || true
+            worker_running && WORKER_STATE="running" || WORKER_STATE="starting"
+        fi
+        rm -f "$SETUP_LOG"
+    fi
+fi
+
+# Persist facts so the CI summary step can read them (single detection source).
+{
+    echo "QUEUE_CONNECTION=$QUEUE_CONNECTION"
+    echo "WORKER_STATE=$WORKER_STATE"
+    echo "BACKLOG=$BACKLOG"
+    echo "WORKER_SETUP_CMD=$WORKER_SETUP_CMD"
+} > "$HEALTH_FILE" 2>/dev/null || true
+
+echo "queue health: connection=$QUEUE_CONNECTION worker=$WORKER_STATE backlog=$BACKLOG"
+if [ "$WORKER_STATE" = "missing" ]; then
+    echo "::warning::[$APP] No queue:work worker running for $DOMAIN (QUEUE_CONNECTION=$QUEUE_CONNECTION, $BACKLOG job(s) pending). Async jobs will NOT be processed. Run as root on the VPS: $WORKER_SETUP_CMD  (or add the NOPASSWD sudoers opt-in — see VPS-DEPLOY-RUNBOOK.md)."
+    echo "WARNING: queue worker MISSING for $DOMAIN — run: $WORKER_SETUP_CMD" >&2
+fi
+
 # --- Prune old releases (keep last 5) -------------------------------------
 ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
 echo "vps-deploy.sh: activated $APP @ $REL"
