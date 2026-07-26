@@ -259,14 +259,36 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
 
+      # No ssh-keyscan here, deliberately. The VPS runs fail2ban, and a keyscan
+      # is a pure pre-auth connection that closes without authenticating — the
+      # exact log line the sshd jail counts. Every deploy therefore chipped away
+      # at the Azure runner IP pool it depends on (jail: 81 banned / 499 failed
+      # as of 2026-07-26). A ban DROPs packets, so the symptom was a silent
+      # timeout at exactly ssh-keyscan's 5s default (-T 5), intermittent because
+      # each job lands on a different, possibly not-yet-banned IP. It is NOT
+      # sshd MaxStartups: the host was idle (load 0.06) with stock 10:30:100 at
+      # failure time, and this workflow never overlaps its own SSH connections.
+      # Do not "fix" this with keyscan retries — retries just earn more bans.
+      #
+      # accept-new performs the same trust-on-first-use pin a keyscan does, but
+      # on the connection that then authenticates, leaving nothing pre-auth for
+      # the jail to count.
       - name: Trust host key
         working-directory: ${{ github.workspace }}
-        env:
-          VPS_HOST: ${{ secrets.VPS_HOST }}
-          VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          set -euo pipefail
           mkdir -p ~/.ssh
-          ssh-keyscan -p "${VPS_PORT:-22}" -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          cat >> ~/.ssh/config <<'EOF'
+          Host *
+            StrictHostKeyChecking accept-new
+            UserKnownHostsFile ~/.ssh/known_hosts
+            ConnectTimeout 30
+            ServerAliveInterval 15
+          EOF
+          chmod 600 ~/.ssh/config
 
       - name: Compute release id
         working-directory: ${{ github.workspace }}
