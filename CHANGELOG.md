@@ -3,6 +3,42 @@
 All notable changes to the reusable workflows and host scripts in this repo.
 Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
+## [v1.1.2] - 2026-07-27
+
+### Fixed
+
+- **Staging rsync silently deleted every `docs/` and `tests/` directory in the
+  app tree, at any depth.** All three deploy workflows staged the release with
+  `--exclude='tests' --exclude='docs'`, intending the two repo-root
+  directories. An rsync pattern containing no slash is matched against the
+  *basename of every path it walks*, not against the transfer root, so those
+  two patterns also dropped `resources/views/docs/`,
+  `resources/views/tests/`, `app/**/docs/`, and any other directory that
+  happened to share the name. Both are now anchored to the transfer root as
+  `--exclude='/tests' --exclude='/docs'`.
+
+  Symptom that surfaced it: paylab's `/docs` route returned 500 with
+  `View [docs.index] not found` — `resources/views/docs/` was tracked in git,
+  built fine in CI, and was absent from every staged release on the host. Any
+  app deployed through this runtime with a view, config, or asset directory
+  named `docs` or `tests` below the root was affected, on both the cloud and
+  the VPS flavour.
+
+  Affected: `laravel-cloud-deploy.yml`, `laravel-vps-deploy.yml`,
+  `vps-deploy.yml`. The staging rsync in each runs from the app root
+  (`./ → _artifact/`, under `app/<source_dir>` where the input applies), so a
+  leading `/` anchors to the repo root exactly as intended.
+
+  Deliberately left unanchored: `node_modules`, `.git`, `.github`, `.vscode`,
+  `.idea`, `.claude`, `.agents`, `.gemini`, `*.log`, `*.sqlite`, `*.map`,
+  `.env*` — these are meant to match at any depth. `deploy.sh` already
+  anchored its own excludes (`/.htaccess`, `/.env`, `/storage`) and needed no
+  change.
+
+  Side effect for callers: released artifacts now also retain `vendor/**/docs`
+  and `vendor/**/tests`, so a staged release is slightly larger than on
+  v1.1.1. No behaviour change beyond that; no input or secret changes.
+
 ## [v1.1.1] - 2026-07-26
 
 ### Fixed

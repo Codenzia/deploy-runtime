@@ -239,14 +239,18 @@ jobs:
           npm ci
           npm run build
 
+      # '/tests' and '/docs' MUST keep their leading slash. An rsync pattern
+      # with no slash matches that basename at any depth, so a bare 'docs'
+      # also drops resources/views/docs, app/**/docs, etc. Patterns meant to
+      # match anywhere (node_modules, .git, *.log) stay unanchored on purpose.
       - name: Stage artifact (dereference path-repo symlinks)
         run: |
           mkdir -p _artifact
           rsync -aL \
             --exclude='.git' --exclude='.github' --exclude='.vscode' \
             --exclude='.idea' --exclude='.claude' --exclude='.agents' \
-            --exclude='.gemini' --exclude='node_modules' --exclude='tests' \
-            --exclude='docs' --exclude='public/hot' --exclude='*.log' \
+            --exclude='.gemini' --exclude='node_modules' --exclude='/tests' \
+            --exclude='/docs' --exclude='public/hot' --exclude='*.log' \
             --exclude='*.sqlite' --exclude='*.map' --exclude='.env' \
             --exclude='.env.*' --exclude='storage/logs/*' \
             --exclude='storage/framework/cache/data/*' \
