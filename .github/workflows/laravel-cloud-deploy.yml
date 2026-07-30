@@ -304,6 +304,34 @@ jobs:
             --exclude='_artifact' \
             ./ _artifact/
 
+      # Build traceability stamp. Written INTO the staged artifact (after the
+      # rsync filter has run, so no exclude can strip it) at the release root,
+      # which becomes Laravel's base_path on the host (public_html/) — next to
+      # artisan, never under public/. The top-level .htaccess rewrites every
+      # request into public/, so /build.json is not web-servable. The release
+      # activator (deploy.sh) does not exclude it. codenzia/filament-panel-base
+      # reads base_path('build.json') for its Version Info widget. Purely
+      # additive: no new inputs, no failure path.
+      - name: Stamp release with build.json
+        working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg commit "$GITHUB_SHA" \
+            --arg commit_short "${GITHUB_SHA:0:7}" \
+            --arg ref "$GITHUB_REF" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg run_number "$GITHUB_RUN_NUMBER" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg target "" \
+            --arg domain "$DOMAIN" \
+            --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{commit:$commit,commit_short:$commit_short,ref:$ref,branch:$branch,run_number:$run_number,run_id:$run_id,workflow:$workflow,repository:$repository,target:$target,domain:$domain,deployed_at:$deployed_at}' \
+            > _artifact/build.json
+          cat _artifact/build.json
+
       - name: Load SSH key
         uses: webfactory/ssh-agent@v0.10.0
         with:

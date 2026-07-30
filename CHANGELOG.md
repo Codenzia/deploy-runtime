@@ -3,6 +3,36 @@
 All notable changes to the reusable workflows and host scripts in this repo.
 Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
+## [v1.2.0] - 2026-07-30
+
+### Added
+
+- **Every deploy now stamps the release with `build.json`.** All three
+  reusable deploy workflows (`vps-deploy.yml`, `laravel-cloud-deploy.yml`,
+  `laravel-vps-deploy.yml`) write a small JSON manifest into the staged
+  artifact immediately before the rsync to the host, so a running release can
+  always be traced back to the commit and CI run that produced it:
+  `commit`, `commit_short`, `ref`, `branch`, `run_number`, `run_id`,
+  `workflow`, `repository`, `target`, `domain`, `deployed_at` (UTC ISO-8601,
+  taken from the stamping step). All values are strings.
+
+  Every value comes from the GitHub context — **no new inputs, no new
+  secrets, fully backward compatible.** Existing callers get the stamp simply
+  by repinning to `@v1.2.0`. `target` is populated from the `target` input on
+  `vps-deploy.yml` and is `""` on the two workflows that have no such input.
+
+  The file is written *after* the staging rsync (so no `--exclude` can strip
+  it) at the release root — Laravel's `base_path()`, next to `artisan` and
+  never under `public/`. It is therefore not web-servable on any of the three
+  targets (see README § "Build stamp"), and it carries only public Git/CI
+  metadata, never secrets. `deploy.sh` does not exclude it, so it survives the
+  local activation rsync on shared hosting.
+
+  Consumed by `codenzia/filament-panel-base` ≥ `v0.6.2`, which reads
+  `base_path('build.json')` and shows the deployed build in its Version Info
+  widget. Absent file (local dev) or malformed JSON → the widget silently
+  omits the row.
+
 ## [v1.1.2] - 2026-07-27
 
 ### Fixed

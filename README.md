@@ -106,3 +106,52 @@ missing (`sudo -n`, idempotent):
 ```
 Without it, `sudo -n` fails fast and the deploy just warns — nothing is forced.
 See [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md) § "Queue worker" for details.
+
+## Build stamp — `build.json` (every deploy, all three workflows)
+
+Since **v1.2.0** every reusable deploy workflow (`vps-deploy.yml`,
+`laravel-cloud-deploy.yml`, `laravel-vps-deploy.yml`) writes a `build.json`
+into the staged artifact just before it is rsynced to the host, so the running
+release can always be traced back to the exact commit and CI run that produced
+it. No new inputs, no new secrets — every value comes from the GitHub context,
+so all existing callers get it for free on repin.
+
+```json
+{
+  "commit":       "9f3c1a5e0b7d2c48a1f6e3b90d5c7a2f4e8b1d60",
+  "commit_short": "9f3c1a5",
+  "ref":          "refs/heads/main",
+  "branch":       "main",
+  "run_number":   "184",
+  "run_id":       "1234567890",
+  "workflow":     "Deploy to VPS",
+  "repository":   "Codenzia/dari-platform",
+  "target":       "staging",
+  "domain":       "dari-new.codenzia.com",
+  "deployed_at":  "2026-07-30T09:14:22Z"
+}
+```
+
+All values are strings. `target` carries the `target` input where the workflow
+has one (`vps-deploy.yml`); it is `""` on the other two, which have no such
+input. `deployed_at` is the UTC timestamp of the stamping step.
+
+**Where it lands** — always the **release root**, which is Laravel's
+`base_path()` on every target, i.e. next to `artisan` and **never under
+`public/`**:
+
+| Workflow | Path on host | Web-reachable? |
+| --- | --- | --- |
+| `vps-deploy.yml` (atomic) | `htdocs/<domain>/releases/<REL>/build.json` → `htdocs/<domain>/current/build.json` | No — doc root is `current/public` |
+| `laravel-cloud-deploy.yml` (Hostinger shared) | `domains/<domain>/apps/releases/<REL>/build.json` → `domains/<domain>/public_html/build.json` | No — the top-level `.htaccess` rewrites every request into `public/`, so `/build.json` resolves to the non-existent `public/build.json` |
+| `laravel-vps-deploy.yml` (non-atomic VPS) | `/home/<user>/htdocs/<domain>/build.json` | No — provided the CloudPanel site's **Root Directory** is `/public`, which Laravel requires anyway |
+
+It is written *after* the staging rsync, so no `--exclude` rule can strip it,
+and the release activator (`deploy.sh`) does not exclude it either. The file
+carries only public Git/CI metadata — commit, branch, run id, timestamp — and
+never secrets, so an accidentally exposed doc root leaks nothing sensitive.
+
+**Consumer:** `codenzia/filament-panel-base` ≥ `v0.6.2` reads
+`base_path('build.json')` and renders `Build #<run_number> · <short sha> ·
+<branch> · <deployed_at> · <target>` in its Version Info widget. The file is
+absent in local development and the widget simply omits the row.
