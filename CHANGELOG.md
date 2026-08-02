@@ -3,6 +3,24 @@
 All notable changes to the reusable workflows and host scripts in this repo.
 Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
+## [v1.2.1] - 2026-08-02
+
+### Fixed
+
+- **`templates/cloudpanel-vhost-laravel.conf` emitted `{{php_settings}}` bare**
+  inside the 8080 server's `location ~ \.php$` block. On current CloudPanel that
+  placeholder expands to a raw PHP ini string (e.g.
+  `error_log=/home/<user>/logs/php/error.log`), which nginx rejects with
+  `[emerg] unknown directive` — the vhost fails its config test and the site
+  will not serve. The token is now wrapped as
+  `fastcgi_param PHP_VALUE "{{php_settings}}";`, matching CloudPanel's own stock
+  vhost. Verified live on `studio.codenzia.com`.
+
+  Template-only change — no workflow behavior changed, so **consumers do not
+  need to repin**. The vhost is pasted by hand into CloudPanel; any site created
+  from the old template must have that one line corrected in
+  **Sites → &lt;site&gt; → Vhost**.
+
 ## [v1.2.0] - 2026-07-30
 
 ### Added
