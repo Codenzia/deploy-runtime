@@ -247,6 +247,18 @@ case "$MODE" in
         ;;
 esac
 
+# APP_KEY backstop. shared/.env is hand-seeded on first deploy, and an empty
+# APP_KEY is an easy omission: /up still returns 200 (it never decrypts), so
+# provisioning looks healthy, but the first request that touches the encrypted
+# session cookie throws MissingAppKeyException and every real page 500s. Once
+# config:cache below bakes the empty key, the failure is baked in too. Generate
+# a key in place if the operator didn't (idempotent — only fires when absent).
+# key:generate writes to $PUB/.env, which is symlinked to $ENV_FILE (shared).
+if ! grep -qE '^APP_KEY=.+' "$ENV_FILE"; then
+    echo "APP_KEY missing/empty in $ENV_FILE → generating one in place"
+    "$PHP_BIN" artisan key:generate --force
+fi
+
 if [ "$FRESH" = "true" ]; then
     # Demo-host guard: migrate:fresh is destructive (drops all tables).
     # Allow it only on Codenzia-controlled demo subdomains; refuse on any

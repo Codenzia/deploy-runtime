@@ -3,6 +3,21 @@
 All notable changes to the reusable workflows and host scripts in this repo.
 Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
+## [Unreleased]
+
+### Fixed
+
+- **`deploy.sh`: generate `APP_KEY` when `shared/.env` was seeded without one.**
+  `shared/.env` is hand-seeded on first deploy and an empty `APP_KEY` is an easy
+  omission: `/up` still returns 200 (it never decrypts), so provisioning looks
+  healthy, but the first request touching the encrypted session cookie throws
+  `MissingAppKeyException` and every real page 500s — and `config:cache` then
+  bakes the empty key in. `deploy.sh` now runs `php artisan key:generate --force`
+  in place when `APP_KEY` is missing/empty (idempotent; writes to the shared
+  `.env` via the symlink). Host-side script change — consumers do **not** repin;
+  the host's `deploy-runtime` clone is pulled and `deploy.sh` re-copied on each
+  new app's first-deploy provision.
+
 ## [v1.2.1] - 2026-08-02
 
 ### Fixed
