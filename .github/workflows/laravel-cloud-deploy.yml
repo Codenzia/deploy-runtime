@@ -337,7 +337,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.HOST_SSH_KEY }}
 
-      - name: Trust host key
+      - name: Trust host key + install connect-retry helper
         working-directory: ${{ github.workspace }}
         env:
           HOST_KNOWN_HOSTS: ${{ secrets.HOST_KNOWN_HOSTS }}
@@ -355,6 +355,28 @@ jobs:
             UserKnownHostsFile ~/.ssh/known_hosts
           EOF
           chmod 600 ~/.ssh/config
+
+          # Connect-retry helper. GitHub-hosted (Azure) runners intermittently
+          # blackhole the FIRST connection to the Hostinger host — "connect to
+          # host ... port ...: Connection timed out", ssh exit 255 — while the
+          # identical job re-run minutes later succeeds. It is transient path
+          # loss between the two networks, and the windows last MINUTES, so
+          # back-to-back retries inside one 30s window do not clear them; a
+          # single long backoff does.
+          #
+          # Wrap ONLY commands that are safe to run twice. Steps that mutate
+          # state non-idempotently get a connectivity gate instead — see
+          # "Activate release".
+          cat > ~/.ssh-retry.sh <<'SH'
+          retry() {
+            if "$@"; then return 0; fi
+            echo "::warning::remote command failed: $* — retrying once in 75s (suspected transient runner-to-host path loss)"
+            sleep 75
+            if "$@"; then return 0; fi
+            echo "::error::remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss (command: $*)"
+            return 1
+          }
+          SH
 
       - name: Compute release id
         working-directory: ${{ github.workspace }}
@@ -416,7 +438,13 @@ jobs:
             echo "→ Provision done. NEXT: seed shared/.env (APP_KEY + DB path + secrets) and add the cron lines printed above in hPanel."
           EOF
           )
-          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<< "$REMOTE_SCRIPT"
+          . ~/.ssh-retry.sh
+          # Wrapped in a function so `retry` can re-feed the script on a second
+          # attempt (a herestring's stdin is consumed by the first one). The
+          # remote script is idempotent: git pull --ff-only, install -m, and a
+          # provision run guarded by the presence of apps/deploy.sh.
+          run_provision() { ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<< "$REMOTE_SCRIPT"; }
+          retry run_provision
 
       - name: Rsync release to host
         working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
@@ -425,9 +453,11 @@ jobs:
           HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
           HOST_PORT: ${{ secrets.HOST_PORT }}
         run: |
+          set -euo pipefail
+          . ~/.ssh-retry.sh
           APPS="domains/${DOMAIN}/apps"
-          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" "mkdir -p \"${APPS}/releases/${REL}\""
-          rsync -az --delete -e "ssh -p $HOST_PORT" _artifact/ "${HOST_USER}@${HOST_HOSTNAME}:${APPS}/releases/${REL}/"
+          retry ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" "mkdir -p \"${APPS}/releases/${REL}\""
+          retry rsync -az --delete -e "ssh -p $HOST_PORT" _artifact/ "${HOST_USER}@${HOST_HOSTNAME}:${APPS}/releases/${REL}/"
 
       - name: Enforce secure session cookie on release
         if: ${{ inputs.mode == 'release' }}
@@ -440,7 +470,10 @@ jobs:
           # the Secure flag. shared/.env is seeded by hand on first deploy and
           # may omit it — guarantee it here (idempotent) before activation so
           # deploy.sh's config:cache picks it up. Runs only on release mode.
-          ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s <<EOF
+          . ~/.ssh-retry.sh
+          # Staged to a file, not piped from a heredoc: `retry` re-invokes the
+          # command, and a heredoc's stdin is consumed by the first attempt.
+          cat > /tmp/secure-cookie-remote.sh <<EOF
           set -euo pipefail
           ENV_FILE="domains/${DOMAIN}/apps/shared/.env"
           if [ ! -f "\$ENV_FILE" ]; then
@@ -454,6 +487,8 @@ jobs:
           fi
           echo "→ SESSION_SECURE_COOKIE=true ensured in \$ENV_FILE"
           EOF
+          run_secure_cookie() { ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" bash -s < /tmp/secure-cookie-remote.sh; }
+          retry run_secure_cookie
 
       - name: Activate release
         env:
@@ -465,6 +500,12 @@ jobs:
           MIGRATE: ${{ inputs.migrate }}
           ALWAYS_SEED: ${{ inputs.always_seed }}
         run: |
+          . ~/.ssh-retry.sh
+          # Activation runs migrations and flips the `current` symlink, so it is
+          # NOT blindly retryable. Gate it on a connection that IS retryable: if
+          # the runner-to-host path is blackholed, the gate absorbs the 75s
+          # backoff and the real command then runs once, on a proven-open path.
+          retry ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" true || exit 1
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
             "APP='${APP_NAME}' DOMAIN='${DOMAIN}' REL='${REL}' FRESH='${FRESH}' MODE='${MODE}' MIGRATE='${MIGRATE}' DEMO_SEEDER='${DEMO_SEEDER}' ALWAYS_SEED='${ALWAYS_SEED}' PHP_BIN='${PHP_BIN}' bash \"domains/${DOMAIN}/apps/deploy.sh\""
 

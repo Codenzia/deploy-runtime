@@ -260,7 +260,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
 
-      - name: Trust host key
+      - name: Trust host key + install connect-retry helper
         working-directory: ${{ github.workspace }}
         run: |
           mkdir -p ~/.ssh
@@ -274,6 +274,28 @@ jobs:
           EOF
           chmod 600 ~/.ssh/config
 
+          # Connect-retry helper. GitHub-hosted (Azure) runners intermittently
+          # blackhole the FIRST connection to the Hostinger VPS — "connect to
+          # host ... port ...: Connection timed out", ssh exit 255 — while the
+          # identical job re-run minutes later succeeds. It is transient path
+          # loss between the two networks, and the windows last MINUTES, so
+          # back-to-back retries inside one 30s window do not clear them; a
+          # single long backoff does.
+          #
+          # Wrap ONLY commands that are safe to run twice. Steps that mutate
+          # state non-idempotently get a connectivity gate instead — see
+          # "Seed .env if missing + activate release".
+          cat > ~/.ssh-retry.sh <<'SH'
+          retry() {
+            if "$@"; then return 0; fi
+            echo "::warning::remote command failed: $* — retrying once in 75s (suspected transient runner-to-host path loss)"
+            sleep 75
+            if "$@"; then return 0; fi
+            echo "::error::remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss (command: $*)"
+            return 1
+          }
+          SH
+
       - name: Wipe CloudPanel skeleton remnants
         working-directory: ${{ github.workspace }}
         env:
@@ -284,7 +306,8 @@ jobs:
           # CloudPanel's Laravel-template scaffolds a sample app under htdocs/
           # with hidden dirs (.cursor/, etc.) that rsync --delete --force can't
           # clean. Wipe them explicitly before rsync. Preserves .env at root.
-          ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" \
+          . ~/.ssh-retry.sh
+          retry ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" \
             "ROOT=/home/${VPS_USER}/htdocs/${DOMAIN}; \
              [ -d \"\$ROOT\" ] || exit 0; \
              find \"\$ROOT\" -maxdepth 1 -name '.*' -not -name '.' -not -name '..' -not -name '.env' -exec rm -rf {} + 2>/dev/null; \
@@ -298,8 +321,10 @@ jobs:
           VPS_HOSTNAME: ${{ secrets.VPS_HOSTNAME }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
+          set -euo pipefail
+          . ~/.ssh-retry.sh
           DEST="${VPS_USER}@${VPS_HOSTNAME}:/home/${VPS_USER}/htdocs/${DOMAIN}/"
-          rsync -az --delete --force --delete-excluded \
+          retry rsync -az --delete --force --delete-excluded \
             --exclude='.env' \
             --exclude='storage/app/*' \
             --exclude='storage/framework/sessions/*' \
@@ -315,6 +340,12 @@ jobs:
           FRESH: ${{ inputs.fresh }}
           MODE: ${{ inputs.mode }}
         run: |
+          . ~/.ssh-retry.sh
+          # Seeds .env and runs migrations, so it is NOT blindly retryable.
+          # Gate it on a connection that IS retryable: if the runner-to-host
+          # path is blackholed, the gate absorbs the 75s backoff and the real
+          # command then runs once, on a path already proven open.
+          retry ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" true || exit 1
           ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" bash -s <<EOF
           set -euo pipefail
           ROOT="/home/${VPS_USER}/htdocs/${DOMAIN}"

@@ -107,6 +107,50 @@ missing (`sudo -n`, idempotent):
 Without it, `sudo -n` fails fast and the deploy just warns — nothing is forced.
 See [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md) § "Queue worker" for details.
 
+## SSH connect-retry (every deploy, all three workflows)
+
+Since **v1.3.0** each reusable deploy workflow installs a POSIX `retry` helper
+at `~/.ssh-retry.sh` in its "Trust host key" step and wraps the remote commands
+that are safe to run twice. On failure it waits **75 s**, retries **once**, and
+if the retry also fails the job stops with:
+
+```
+remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss
+```
+
+GitHub-hosted (Azure) runners intermittently blackhole the *first* connection
+to the Hostinger host — `ssh: connect to host … port …: Connection timed out`,
+exit 255, after the 30 s `ConnectTimeout` — while the same job re-run minutes
+later succeeds. It is path loss between the two networks, **not** fail2ban (no
+bans were recorded at the observed failure times; v1.1.1 already removed the
+`ssh-keyscan` that used to earn them — do not reintroduce it). The blackhole
+windows last minutes, so quick successive attempts inside one `ConnectTimeout`
+all land in the same hole; one long backoff is what actually clears it.
+
+**What is and isn't retried:**
+
+| Step | Treatment |
+| --- | --- |
+| `ssh mkdir/chmod`, host-script `scp`, artifact `rsync` | Retried — idempotent |
+| Provision over SSH (`vps-provision.sh`, `provision-app.sh`, skeleton wipe, secure-cookie enforcement) | Retried — idempotent by design and already guarded |
+| **Release activation** (migrations + `current` symlink flip) | **Not retried.** Preceded by a retryable `ssh … true` connectivity gate, so a blackholed path absorbs the backoff and activation still runs exactly once |
+| Smoke test, queue worker health check | Not retried — advisory only; their failure is already non-fatal, so a retry would just add 75 s |
+
+Atomic-release semantics, step ordering, and idempotency are untouched. Nothing
+to configure: no new inputs or secrets, callers get it by repinning to
+`@v1.3.0`.
+
+Wrap only idempotent commands if you add remote steps of your own:
+
+```sh
+. ~/.ssh-retry.sh
+retry scp -P "$PORT" file "${DEST}:path/"
+```
+
+`retry` re-invokes its arguments, so a command fed by a heredoc must be wrapped
+in a shell function reading from a staged file — a heredoc's stdin is consumed
+by the first attempt.
+
 ## Build stamp — `build.json` (every deploy, all three workflows)
 
 Since **v1.2.0** every reusable deploy workflow (`vps-deploy.yml`,

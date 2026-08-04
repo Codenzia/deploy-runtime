@@ -5,6 +5,56 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.3.0] - 2026-08-04
+
+### Added
+
+- **Automatic connect-retry on every remote command, 75 s apart.** All three
+  reusable deploy workflows (`vps-deploy.yml`, `laravel-cloud-deploy.yml`,
+  `laravel-vps-deploy.yml`) now install a small POSIX `retry` helper at
+  `~/.ssh-retry.sh` in the "Trust host key" step and wrap the SSH/SCP/rsync
+  commands that are safe to run twice. On failure the step waits **75 s**,
+  retries **once**, and if that also fails the job dies with:
+
+  > `remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss`
+
+  **Why.** GitHub-hosted (Azure) runners intermittently blackhole the *first*
+  connection to the Hostinger host: `ssh: connect to host … port …: Connection
+  timed out`, exit 255, after the 30 s `ConnectTimeout` — while the identical
+  job re-run minutes later succeeds. Diagnosed on `dari-platform` on
+  2026-08-04: three consecutive deploys failed attempt 1 and passed on retry.
+  **fail2ban was ruled out** — no bans recorded at any of the failure times and
+  the runner IPs were never jailed (v1.1.1 already removed the `ssh-keyscan`
+  that used to earn those bans; do not reintroduce it). This is transient path
+  loss between the two networks.
+
+  **Why 75 s and only one retry.** The blackhole windows last *minutes*, so
+  back-to-back attempts inside one 30 s `ConnectTimeout` all land in the same
+  hole — the reason the previous 3×30 s helper in `dari-platform` did not help.
+  A single long backoff clears the common case; a second failure 75 s later is
+  no longer "transient" and should page a human rather than burn more runner
+  minutes.
+
+  **Retry safety.** Only idempotent commands are wrapped: `mkdir -p` / `chmod`
+  over SSH, artifact `scp`/`rsync` uploads, and the provisioning scripts, which
+  are idempotent by design and already guarded (`vps-provision.sh` only runs
+  when `shared/.env` is absent). The **release-activation** steps — which run
+  migrations and flip the `current` symlink — are deliberately **not** retried.
+  They instead get a *connectivity gate*: a retryable `ssh … true` immediately
+  before, so a blackholed path absorbs the 75 s backoff and the activation
+  itself still runs exactly once, on a path already proven open. Atomic-release
+  semantics, ordering, and idempotency are unchanged.
+
+  No new inputs, no new secrets, no behaviour change on a healthy path (the
+  helper adds one extra authenticated connection before activation). Existing
+  callers get it by repinning to `@v1.3.0`.
+
+  Deliberately left unwrapped: the post-deploy **smoke test** and **queue worker
+  health check**. Both are advisory — the queue check already swallows failure
+  with `|| true`, and the smoke assertion's result is discarded by the step's
+  trailing `curl` — so retrying them would only add 75 s to deploys where they
+  legitimately report nothing.
+
 ### Fixed
 
 - **`deploy.sh`: generate `APP_KEY` when `shared/.env` was seeded without one.**
