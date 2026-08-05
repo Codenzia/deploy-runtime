@@ -111,11 +111,12 @@ See [`VPS-DEPLOY-RUNBOOK.md`](VPS-DEPLOY-RUNBOOK.md) § "Queue worker" for detai
 
 Since **v1.3.0** each reusable deploy workflow installs a POSIX `retry` helper
 at `~/.ssh-retry.sh` in its "Trust host key" step and wraps the remote commands
-that are safe to run twice. On failure it waits **75 s**, retries **once**, and
-if the retry also fails the job stops with:
+that are safe to run twice. Since **v1.3.1** it backs off **twice**: attempt →
+wait **75 s** → attempt → wait **150 s** → final attempt, ~4.5 min worst case.
+If all three fail the job stops with:
 
 ```
-remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss
+remote connect failed three times across ~4 minutes — treat as host outage, not transient path loss
 ```
 
 GitHub-hosted (Azure) runners intermittently blackhole the *first* connection
@@ -125,7 +126,11 @@ later succeeds. It is path loss between the two networks, **not** fail2ban (no
 bans were recorded at the observed failure times; v1.1.1 already removed the
 `ssh-keyscan` that used to earn them — do not reintroduce it). The blackhole
 windows last minutes, so quick successive attempts inside one `ConnectTimeout`
-all land in the same hole; one long backoff is what actually clears it.
+all land in the same hole. The single 75 s backoff v1.3.0 shipped was not
+enough either: `dari-platform` lost its first attempt on three consecutive
+deploys over two days, both tries failing ~75 s apart while a manual re-run
+5–10 min later always succeeded. Windows past 105 s are routine, hence the
+second, longer backoff.
 
 **What is and isn't retried:**
 
@@ -133,12 +138,12 @@ all land in the same hole; one long backoff is what actually clears it.
 | --- | --- |
 | `ssh mkdir/chmod`, host-script `scp`, artifact `rsync` | Retried — idempotent |
 | Provision over SSH (`vps-provision.sh`, `provision-app.sh`, skeleton wipe, secure-cookie enforcement) | Retried — idempotent by design and already guarded |
-| **Release activation** (migrations + `current` symlink flip) | **Not retried.** Preceded by a retryable `ssh … true` connectivity gate, so a blackholed path absorbs the backoff and activation still runs exactly once |
-| Smoke test, queue worker health check | Not retried — advisory only; their failure is already non-fatal, so a retry would just add 75 s |
+| **Release activation** (migrations + `current` symlink flip) | **Not retried.** Preceded by a retryable `ssh … true` connectivity gate, so a blackholed path absorbs the backoffs and activation still runs exactly once |
+| Smoke test, queue worker health check | Not retried — advisory only; their failure is already non-fatal, so a retry would just add minutes |
 
 Atomic-release semantics, step ordering, and idempotency are untouched. Nothing
 to configure: no new inputs or secrets, callers get it by repinning to
-`@v1.3.0`.
+`@v1.3.1`.
 
 Wrap only idempotent commands if you add remote steps of your own:
 

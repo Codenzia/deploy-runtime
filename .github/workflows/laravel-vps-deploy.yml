@@ -279,8 +279,10 @@ jobs:
           # host ... port ...: Connection timed out", ssh exit 255 — while the
           # identical job re-run minutes later succeeds. It is transient path
           # loss between the two networks, and the windows last MINUTES, so
-          # back-to-back retries inside one 30s window do not clear them; a
-          # single long backoff does.
+          # back-to-back retries inside one 30s window do not clear them. A
+          # single 75s backoff did not either — dari-platform lost its first
+          # attempt three times in a row after v1.3.0 shipped, on windows
+          # measured past 105s — so there are two: 75s, then 150s.
           #
           # Wrap ONLY commands that are safe to run twice. Steps that mutate
           # state non-idempotently get a connectivity gate instead — see
@@ -288,10 +290,13 @@ jobs:
           cat > ~/.ssh-retry.sh <<'SH'
           retry() {
             if "$@"; then return 0; fi
-            echo "::warning::remote command failed: $* — retrying once in 75s (suspected transient runner-to-host path loss)"
+            echo "::warning::remote command failed: $* — retrying in 75s (suspected transient runner-to-host path loss)"
             sleep 75
             if "$@"; then return 0; fi
-            echo "::error::remote connect failed twice ~75s apart — likely VPS-side outage, not transient path loss (command: $*)"
+            echo "::warning::still failing: $* — one last retry in 150s"
+            sleep 150
+            if "$@"; then return 0; fi
+            echo "::error::remote connect failed three times across ~4 minutes — treat as host outage, not transient path loss (command: $*)"
             return 1
           }
           SH
@@ -343,7 +348,7 @@ jobs:
           . ~/.ssh-retry.sh
           # Seeds .env and runs migrations, so it is NOT blindly retryable.
           # Gate it on a connection that IS retryable: if the runner-to-host
-          # path is blackholed, the gate absorbs the 75s backoff and the real
+          # path is blackholed, the gate absorbs the backoffs and the real
           # command then runs once, on a path already proven open.
           retry ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" true || exit 1
           ssh -p "$VPS_PORT" "${VPS_USER}@${VPS_HOSTNAME}" bash -s <<EOF

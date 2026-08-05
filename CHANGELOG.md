@@ -5,6 +5,31 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.3.1] - 2026-08-05
+
+### Changed
+
+- **Connect-retry now backs off twice: 75 s, then 150 s.** The helper installed
+  at `~/.ssh-retry.sh` by all three reusable deploy workflows runs
+  attempt → wait 75 s → attempt → wait 150 s → final attempt, ~4.5 min worst
+  case, before failing with:
+
+  > `remote connect failed three times across ~4 minutes — treat as host outage, not transient path loss`
+
+  **Why.** v1.3.0's single 75 s backoff was sized on the assumption that a
+  window surviving 75 s was no longer transient. It is: after v1.3.0 shipped,
+  `dari-platform`'s `publish-extras` job failed its first attempt on three
+  consecutive deploys over two days, each losing *both* tries ~75 s apart,
+  while a manual re-run 5–10 min later succeeded every time. The Hostinger↔Azure
+  blackhole windows have been observed past 105 s and sometimes run several
+  minutes, so the second, longer backoff is what actually clears them — and the
+  cost is paid only on deploys that would otherwise have failed outright.
+
+  Nothing else changes: the same commands are wrapped, the non-idempotent
+  activation steps keep their unretried form behind a retryable `ssh … true`
+  gate, and the helper stays POSIX sh. Callers get it by repinning to
+  `@v1.3.1`.
+
 ## [v1.3.0] - 2026-08-04
 
 ### Added
