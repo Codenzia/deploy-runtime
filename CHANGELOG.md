@@ -5,6 +5,56 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.0] - 2026-08-13
+
+### Changed
+
+- **The Cloud Startup smoke test now fails the run on a 5xx.** It previously
+  ended in `|| echo "warning: /up smoke failed (TLS or DNS not yet ready)"`,
+  which swallowed *every* outcome — connection refused and HTTP 500 alike. A
+  site serving a hard error therefore finished the deploy green.
+
+  **Why.** Caught on `dari-jo`'s first deploy: `provision-app.sh` writes an
+  `apps/shared/.env` containing nothing but a branding comment, so the freshly
+  activated release had no `APP_KEY` and returned 500 on every request. The run
+  reported success on all 22 steps. The failure surfaced only because the URL
+  was opened by hand afterwards. Any app whose `.env` is unseeded, whose
+  `DB_DATABASE` path is wrong, or whose storage tree is unwritable would fail
+  the same way, silently.
+
+  **New behaviour**, in order of precedence:
+
+  | Response | Result |
+  |---|---|
+  | 2xx / 3xx | pass |
+  | 404 on `/up` | re-probe `/`, judge that instead (apps with no health route) |
+  | 5xx, or any other 4xx | **fail the run**, with the release still activated |
+  | connection failure (`000`) | warning only — DNS and TLS genuinely lag a first deploy |
+
+  Each probe is attempted up to 3 times, 10 s apart, so a slow first byte after
+  activation does not trip it. The error annotation names the usual causes
+  (`APP_KEY`, `DB_DATABASE`, `storage/logs`) so the next person does not have to
+  rediscover them.
+
+  Note the release is **activated before** the smoke test, and this change does
+  not roll it back — a red run means "live and broken", not "not deployed".
+
+### Added
+
+- **`smoke_strict` input** (boolean, default `true`). Set `false` to keep the
+  old warn-only behaviour for a site expected to error immediately after
+  activation. An unreachable host stays a warning regardless; this governs only
+  responses the server actually produced.
+
+### Upgrade notes
+
+Repin the caller to `@v1.4.0`. No other change is required. Be aware that an
+app already deploying onto a broken configuration will now go **red** where it
+previously went green — that is the point, but it means the first run after
+repinning can fail on a pre-existing fault rather than anything in that release.
+Consumers stay on their current tag until they repin, so nothing changes fleet-wide
+until each repo opts in.
+
 ## [v1.3.1] - 2026-08-05
 
 ### Changed

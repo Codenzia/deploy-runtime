@@ -91,6 +91,15 @@ on:
         required: false
         type: boolean
         default: false
+      smoke_strict:
+        description: |
+          Fail the run when the deployed site answers with a 5xx. Default true.
+          An unreachable host (DNS/TLS not ready) stays a warning either way —
+          this only governs responses the server actually produced. Set false
+          for a site that is expected to error immediately after activation.
+        required: false
+        type: boolean
+        default: true
       source_dir:
         description: |
           Subdirectory inside the caller repo that holds the Laravel app
@@ -520,9 +529,60 @@ jobs:
           HOST_USER: ${{ secrets.HOST_USER }}
           HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
           HOST_PORT: ${{ secrets.HOST_PORT }}
+          SMOKE_STRICT: ${{ inputs.smoke_strict }}
         run: |
           ssh -p "$HOST_PORT" "${HOST_USER}@${HOST_HOSTNAME}" \
             "test -f \"domains/${DOMAIN}/public_html/public/index.php\" \
              && test -L \"domains/${DOMAIN}/public_html/.env\" \
              && test -L \"domains/${DOMAIN}/public_html/storage\""
-          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "https://${DOMAIN}/up" || echo "warning: /up smoke failed (TLS or DNS not yet ready)"
+          # The old version piped every failure into `|| echo warning`, so a
+          # site serving 500 (missing APP_KEY, unseeded .env, bad DB path)
+          # finished the run green. Now: 5xx is a hard failure, an unreachable
+          # host stays a warning (DNS/TLS genuinely lag a first deploy), and a
+          # 404 on /up falls back to the document root for apps with no health
+          # route. Set smoke_strict: false to restore warn-only behaviour.
+          # curl already prints 000 on a connection failure, so `|| echo 000`
+          # would concatenate a second one and produce "000000" — which matches
+          # no case below and would hard-fail the very situation we tolerate.
+          probe() {
+            local out
+            out="$(curl -sS -o /dev/null -m 20 -w '%{http_code}' "$1" 2>/dev/null || true)"
+            printf '%s' "${out:-000}"
+          }
+
+          url="https://${DOMAIN}/up"
+          code=000
+
+          for attempt in 1 2 3; do
+            code="$(probe "$url")"
+
+            # No health route on this app — judge the document root instead.
+            if [ "$code" = "404" ] && [ "$url" != "https://${DOMAIN}/" ]; then
+              url="https://${DOMAIN}/"
+              code="$(probe "$url")"
+            fi
+
+            case "$code" in
+              2*|3*) break ;;
+            esac
+
+            [ "$attempt" -lt 3 ] && sleep 10
+          done
+
+          echo "smoke: ${url} -> HTTP ${code}"
+
+          case "$code" in
+            2*|3*)
+              echo "smoke test passed"
+              ;;
+            000)
+              echo "::warning title=Smoke test inconclusive::${url} unreachable (DNS or TLS may not be ready yet). The release is activated but unverified."
+              ;;
+            *)
+              if [ "${SMOKE_STRICT}" = "true" ]; then
+                echo "::error title=Smoke test failed::${url} returned HTTP ${code}. The release is live and serving errors — check apps/shared/.env (APP_KEY, DB_DATABASE) and storage/logs."
+                exit 1
+              fi
+              echo "::warning title=Smoke test failed::${url} returned HTTP ${code} (smoke_strict is false, not failing the run)."
+              ;;
+          esac
