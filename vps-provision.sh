@@ -60,7 +60,7 @@ fi
 # everything, carry the durable bits into shared/, and tuck the old tree
 # into shared/backups/pre-atomic-<stamp>/ so doc-root=current/public wins.
 LOOSE_COUNT="$(find "$SITE_DIR" -maxdepth 1 -mindepth 1 \
-    ! -name releases ! -name shared ! -name current 2>/dev/null | wc -l)"
+    ! -name releases ! -name shared ! -name current ! -name .deploy 2>/dev/null | wc -l)"
 
 if [ "$LOOSE_COUNT" -gt 0 ]; then
     if [ "$ADOPT" != "true" ]; then
@@ -125,9 +125,11 @@ if [ "$ADOPT" = "true" ] && [ "$LOOSE_COUNT" -gt 0 ]; then
     fi
 
     # Move the entire old tree (everything except our managed dirs) into the
-    # snapshot dir so the new current/public doc root serves cleanly.
+    # snapshot dir so the new current/public doc root serves cleanly. `.deploy`
+    # holds the host scripts CI uploaded moments ago, including the activator
+    # the very next step runs — sweeping it into the snapshot fails that step.
     find "$SITE_DIR" -maxdepth 1 -mindepth 1 \
-        ! -name releases ! -name shared ! -name current \
+        ! -name releases ! -name shared ! -name current ! -name .deploy \
         -exec mv -t "$ADOPT_DIR" {} + 2>/dev/null || true
     echo "  moved old tree → $ADOPT_DIR (delete it once the new release is verified)"
 fi

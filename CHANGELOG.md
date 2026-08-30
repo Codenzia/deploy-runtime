@@ -5,6 +5,18 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`vps-provision.sh --adopt` no longer sweeps `.deploy/` into the snapshot.**
+  The adopt path moves every loose top-level entry of the site dir into
+  `shared/backups/pre-atomic-<stamp>/` — and `.deploy/` (the host scripts
+  `vps-deploy.yml` had uploaded seconds earlier) went with it, so the very next
+  step failed with `htdocs/<domain>/.deploy/vps-deploy.sh: No such file or
+  directory`. Caught on paylab's first VPS deploy (2026-08-30). Both the
+  loose-tree count and the move now exclude `.deploy`. A run that already hit
+  this only needs a re-run with `adopt: false` — provisioning is complete and
+  the scripts are re-uploaded every run.
+
 ## [v1.4.0] - 2026-08-13
 
 ### Changed
