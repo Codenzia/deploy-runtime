@@ -5,6 +5,8 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.1] - 2026-08-31
+
 ### Fixed
 
 - **`vps-provision.sh --adopt` no longer sweeps `.deploy/` into the snapshot.**
