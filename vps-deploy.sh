@@ -292,7 +292,20 @@ backlog_count() {
 WORKER_STATE="not-required"
 BACKLOG="0"
 if [ "$QUEUE_CONNECTION" != "sync" ]; then
-    if worker_running; then WORKER_STATE="running"; else WORKER_STATE="missing"; fi
+    # SAMPLED, NOT GLANCED AT. This deploy ran `queue:restart` moments ago, so
+    # a HEALTHY worker is mid-respawn right now: it exits on the signal and
+    # supervisor has it back inside ~2s. A single pgrep landed exactly in that
+    # gap on studio-creator (2026-09-01 00:57:19, between the exit at :18.7 and
+    # RUNNING at :20.7) and reported a live worker as missing — which reads as
+    # "async jobs will NOT be processed" in the deploy log and, where the
+    # NOPASSWD grant exists, triggers a needless reinstall. Poll for up to 15s
+    # before calling it missing; a genuinely absent worker costs the deploy
+    # those 15 seconds once, a healthy one usually answers on the first try.
+    WORKER_STATE="missing"
+    for _ in 1 2 3 4 5; do
+        if worker_running; then WORKER_STATE="running"; break; fi
+        sleep 3
+    done
     BACKLOG="$(backlog_count || true)"
     [ -z "$BACKLOG" ] && BACKLOG="?"
 

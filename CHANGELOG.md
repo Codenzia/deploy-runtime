@@ -5,6 +5,21 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.2] - 2026-09-01
+
+### Fixed
+
+- **The queue-worker health check polls instead of glancing.** The deploy runs
+  `queue:restart` moments before the check, so a healthy supervised worker is
+  mid-respawn — exited on the signal, back inside ~2 seconds. A single `pgrep`
+  landed exactly in that gap on studio-creator (2026-09-01: warning at
+  00:57:19.4, between the worker's exit at :18.7 and RUNNING at :20.7) and
+  reported a live worker as missing — alarming the deploy log and, where the
+  NOPASSWD grant exists, triggering a needless reinstall. The check now polls
+  up to 15s (5 × 3s) before calling the worker missing. A host with no worker
+  pays those 15 seconds once per deploy; a healthy one answers on the first
+  try.
+
 ## [v1.4.1] - 2026-08-31
 
 ### Fixed
