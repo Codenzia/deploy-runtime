@@ -5,6 +5,15 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+- **laravel-vps-deploy: the seeded `.env` carries mail placeholders.** A fresh host
+  ran with the `log` mailer and nothing said so; password resets and every
+  notification email went to `storage/logs`. The template now sets
+  `MAIL_MAILER=log` explicitly with commented SMTP keys and a note to fill them
+  in before the first real user. Existing hosts keep their `.env` — add the keys
+  by hand.
+- **laravel-vps-deploy: the console password is no longer printed** into the
+  workflow log when `.env` is seeded. Read it from `.env` on the host.
+
 ## [v1.4.3] - 2026-09-06
 
 - **laravel-vps-deploy: a deploy no longer wipes the live database.** The host

@@ -395,6 +395,17 @@ jobs:
           SESSION_DRIVER=file
           SESSION_SECURE_COOKIE=\$SESSION_SECURE
           QUEUE_CONNECTION=database
+          # Mail is OFF until you set it: with the log mailer every password
+          # reset and notification email is written to storage/logs instead of
+          # sent. Fill these in on the host before the first real user.
+          MAIL_MAILER=log
+          # MAIL_HOST=smtp.example.com
+          # MAIL_PORT=587
+          # MAIL_USERNAME=
+          # MAIL_PASSWORD=
+          # MAIL_ENCRYPTION=tls
+          # MAIL_FROM_ADDRESS=noreply@${DOMAIN}
+          # MAIL_FROM_NAME="${APP_NAME}"
 
           CONSOLE_USER=admin
           CONSOLE_PASSWORD=\$CPW
@@ -402,7 +413,7 @@ jobs:
           ADMIN_SEED_PASSWORD=\$CPW
           INNER
             chmod 600 .env
-            echo "Seeded .env (CONSOLE_PASSWORD=\$CPW)"
+            echo "Seeded .env (console password generated — read it from .env on the host; it is not printed here)"
           fi
 
           # Refresh caches + run migrations.
