@@ -345,7 +345,7 @@ jobs:
             --filter='P /storage/framework/sessions/**' \
             --filter='P /storage/logs/**' \
             -e "ssh -p $VPS_PORT" \
-            _artifact/ "$DEST\"
+            _artifact/ "$DEST"
 
       - name: Seed .env if missing + activate release
         env:
