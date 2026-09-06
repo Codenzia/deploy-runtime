@@ -5,6 +5,8 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.3] - 2026-09-06
+
 - **laravel-vps-deploy: a deploy no longer wipes the live database.** The host
   rsync ran `--delete --force --delete-excluded` with `.env`, `storage/app`,
   sessions and logs as `--exclude`s. `--delete-excluded` deletes receiver paths
