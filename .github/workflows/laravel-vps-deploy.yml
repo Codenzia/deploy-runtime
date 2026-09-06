@@ -329,13 +329,23 @@ jobs:
           set -euo pipefail
           . ~/.ssh-retry.sh
           DEST="${VPS_USER}@${VPS_HOSTNAME}:/home/${VPS_USER}/htdocs/${DOMAIN}/"
-          retry rsync -az --delete --force --delete-excluded \
-            --exclude='.env' \
-            --exclude='storage/app/*' \
-            --exclude='storage/framework/sessions/*' \
-            --exclude='storage/logs/*' \
+          # --delete removes host files absent from the artifact, which keeps
+          # stale code out -- but the live database, .env, uploads, sessions and
+          # logs are never IN the artifact, so they must be protected, not
+          # excluded: with --delete-excluded an --exclude'd path is DELETED on
+          # the host, which is exactly how every deploy wiped database.sqlite
+          # and re-seeded .env from the template. 'P' = protect: never deleted
+          # on the receiver, never overwritten because nothing in the artifact
+          # matches it.
+          retry rsync -az --delete --force \
+            --filter='P /.env' \
+            --filter='P /database/*.sqlite' \
+            --filter='P /database/*.sqlite-*' \
+            --filter='P /storage/app/**' \
+            --filter='P /storage/framework/sessions/**' \
+            --filter='P /storage/logs/**' \
             -e "ssh -p $VPS_PORT" \
-            _artifact/ "$DEST"
+            _artifact/ "$DEST\"
 
       - name: Seed .env if missing + activate release
         env:

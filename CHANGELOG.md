@@ -5,6 +5,18 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+- **laravel-vps-deploy: a deploy no longer wipes the live database.** The host
+  rsync ran `--delete --force --delete-excluded` with `.env`, `storage/app`,
+  sessions and logs as `--exclude`s. `--delete-excluded` deletes receiver paths
+  that match an exclude, so every deploy removed `.env` (then re-seeded it from
+  the template, discarding any edits) and, because the artifact never contains
+  `*.sqlite`, plain `--delete` removed `database/database.sqlite` too -- every
+  deploy of a SQLite app started from an empty database. Found on task-off.com,
+  where `migrate:fresh` then failed on a freshly recreated 64 KB file. Those
+  paths are now rsync *protect* filters (`P`): never deleted, and never
+  overwritten because nothing in the artifact matches them. `--delete` still
+  clears stale code. Affects every VPS app on this workflow.
+
 ## [v1.4.2] - 2026-09-01
 
 ### Fixed
