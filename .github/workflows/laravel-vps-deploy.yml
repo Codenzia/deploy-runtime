@@ -374,6 +374,7 @@ jobs:
           if [ ! -f .env ]; then
             APP_KEY="base64:\$(openssl rand -base64 32)"
             CPW="\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)"
+            SAPW="\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)"
             APP_ENV=\$([ "${MODE}" = "release" ] && echo production || echo local)
             APP_DEBUG=\$([ "${MODE}" = "release" ] && echo false || echo true)
             # HTTPS-served prod hosts must mark the session cookie Secure.
@@ -411,6 +412,15 @@ jobs:
           CONSOLE_PASSWORD=\$CPW
           ADMIN_PASSWORD=\$CPW
           ADMIN_SEED_PASSWORD=\$CPW
+          
+          # The protected super admin (codenzia/laravel-superadmin). This is the
+          # identity every deploy re-asserts with `superadmin:ensure --from-env`, so a
+          # reseed never leaves a random password behind. Vendor-operated host:
+          # change either value here any time. For a customer-facing host, blank
+          # the password: the package then keeps a random one and the /superadmin
+          # recovery route (needs MAIL_*) is the way in.
+          SUPER_ADMIN_EMAIL=superadmin@${DOMAIN}
+          SUPER_ADMIN_PASSWORD=\$SAPW
           INNER
             chmod 600 .env
             echo "Seeded .env (console password generated — read it from .env on the host; it is not printed here)"
@@ -424,6 +434,12 @@ jobs:
             php artisan migrate:fresh --seed --seeder="${DEMO_SEEDER}" --force
           fi
 
+          # Re-assert the protected super admin from .env after every migrate/seed:
+          # a reseed drops the row and the package would recreate it with a random
+          # password. Skipped cleanly on apps that do not ship the package.
+          if php artisan list --raw 2>/dev/null | grep -q "^superadmin:ensure"; then
+            php artisan superadmin:ensure --from-env || true
+          fi
           php artisan storage:link || true
           php artisan vendor:publish --tag=livewire:assets --force 2>/dev/null || true
           php artisan vendor:publish --tag=filament-assets --force 2>/dev/null || true

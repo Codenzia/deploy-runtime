@@ -5,6 +5,16 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.4] - 2026-09-10
+
+- **laravel-vps-deploy: the protected super admin survives reseeds.** The seeded
+  `.env` now carries `SUPER_ADMIN_EMAIL=superadmin@<domain>` and a generated
+  `SUPER_ADMIN_PASSWORD`, and every deploy runs
+  `superadmin:ensure --from-env` after migrating (skipped on apps without the
+  package). No more SSH after a `fresh` deploy. Blank the password on a
+  customer-facing host to keep the package's random-password + recovery-route
+  behaviour.
+
 - **laravel-vps-deploy: the seeded `.env` carries mail placeholders.** A fresh host
   ran with the `log` mailer and nothing said so; password resets and every
   notification email went to `storage/logs`. The template now sets
