@@ -5,6 +5,17 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.5] - 2026-09-11
+
+- **laravel-vps-deploy: the event cache is built post-deploy.** The workflow
+  cached config, routes and views but never ran `event:cache`, so every listener
+  on a deployed host was discovered by scanning `app/Listeners` on each request
+  instead of being read from `bootstrap/cache/events.php` — and `doctor` reported
+  "Events cached: not cached" on hosts that were otherwise fully optimised. Both
+  host scripts (`deploy.sh`, `vps-deploy.sh`) already did this; the reusable
+  workflow now matches them, with the same non-fatal `|| true` the other cache
+  steps use.
+
 ## [v1.4.4] - 2026-09-10
 
 - **laravel-vps-deploy: the protected super admin survives reseeds.** The seeded
