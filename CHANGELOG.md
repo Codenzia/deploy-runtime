@@ -5,6 +5,24 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.6] - 2026-09-14
+
+- **laravel-vps-deploy: a pre-existing `.env` gets the super admin identity
+  backfilled.** v1.4.4 wrote `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` only
+  into a freshly seeded `.env`. A host whose `.env` predates that release had
+  neither key, so `superadmin:ensure --from-env` had nothing to assert and the
+  protected account kept the random password the package gave it at migrate —
+  with the log mailer, the recovery route cannot deliver, so nobody could sign
+  in. The step now appends a missing `SUPER_ADMIN_EMAIL` (superadmin@<domain>)
+  and a missing `SUPER_ADMIN_PASSWORD` (generated on the host, never printed)
+  before the ensure. A key that exists but is blank is left alone: that is the
+  documented customer-facing choice.
+- **laravel-vps-deploy: the runner no longer prints `superadmin:ensure: command
+  not found`.** The `.env` template is an unquoted heredoc, so a pair of
+  backticks in one of its comment lines was command-substituted on the runner.
+  Harmless (the substitution result was a comment) but alarming in every deploy
+  log since v1.4.4. The backticks are gone.
+
 ## [v1.4.5] - 2026-09-11
 
 - **laravel-vps-deploy: the event cache is built post-deploy.** The workflow

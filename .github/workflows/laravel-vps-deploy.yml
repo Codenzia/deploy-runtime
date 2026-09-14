@@ -414,7 +414,7 @@ jobs:
           ADMIN_SEED_PASSWORD=\$CPW
           
           # The protected super admin (codenzia/laravel-superadmin). This is the
-          # identity every deploy re-asserts with `superadmin:ensure --from-env`, so a
+          # identity every deploy re-asserts with superadmin:ensure --from-env, so a
           # reseed never leaves a random password behind. Vendor-operated host:
           # change either value here any time. For a customer-facing host, blank
           # the password: the package then keeps a random one and the /superadmin
@@ -424,6 +424,18 @@ jobs:
           INNER
             chmod 600 .env
             echo "Seeded .env (console password generated — read it from .env on the host; it is not printed here)"
+          fi
+
+          # An .env that predates the super admin identity gets the two keys once,
+          # so ensure --from-env has something to assert. A key that is present
+          # but blank is a deliberate choice (customer-facing host) and is kept.
+          if ! grep -q '^SUPER_ADMIN_EMAIL=' .env; then
+            printf '\nSUPER_ADMIN_EMAIL=superadmin@%s\n' "${DOMAIN}" >> .env
+            echo "Backfilled SUPER_ADMIN_EMAIL into .env"
+          fi
+          if ! grep -q '^SUPER_ADMIN_PASSWORD=' .env; then
+            printf 'SUPER_ADMIN_PASSWORD=%s\n' "\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)" >> .env
+            echo "Backfilled SUPER_ADMIN_PASSWORD into .env (read it on the host; it is not printed here)"
           fi
 
           # Refresh caches + run migrations.
