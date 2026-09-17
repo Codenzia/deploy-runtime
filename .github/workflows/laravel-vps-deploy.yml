@@ -392,7 +392,9 @@ jobs:
           DB_CONNECTION=sqlite
           DB_DATABASE=\$ROOT/database/database.sqlite
 
-          CACHE_DRIVER=file
+          # The app cache must not live in the SQLite file: concurrent requests
+          # collide on its write lock and fail with "database is locked".
+          CACHE_STORE=file
           SESSION_DRIVER=file
           SESSION_SECURE_COOKIE=\$SESSION_SECURE
           QUEUE_CONNECTION=database
@@ -436,6 +438,14 @@ jobs:
           if ! grep -q '^SUPER_ADMIN_PASSWORD=' .env; then
             printf 'SUPER_ADMIN_PASSWORD=%s\n' "\$(openssl rand -base64 18 | tr -d '+/=' | head -c 24)" >> .env
             echo "Backfilled SUPER_ADMIN_PASSWORD into .env (read it on the host; it is not printed here)"
+          fi
+
+          # CACHE_STORE is the key Laravel reads; an .env seeded by an earlier
+          # release carried CACHE_DRIVER, which nothing reads, so the cache fell
+          # back to the database, i.e. the SQLite file. Add the real key once.
+          if ! grep -q '^CACHE_STORE=' .env; then
+            printf 'CACHE_STORE=file\n' >> .env
+            echo "Backfilled CACHE_STORE=file into .env"
           fi
 
           # Refresh caches + run migrations.

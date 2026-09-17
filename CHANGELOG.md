@@ -5,6 +5,17 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.7] - 2026-09-18
+
+- **laravel-vps-deploy: the cache leaves the SQLite file.** The seeded `.env`
+  wrote `CACHE_DRIVER=file`, a key Laravel 11+ no longer reads; the key is
+  `CACHE_STORE`, whose default is `database`. So every host provisioned by this
+  workflow cached inside its own SQLite database, and pages that fire several
+  requests at once (a gallery, a dashboard of widgets) failed with "database is
+  locked". The template now writes `CACHE_STORE=file`, and a pre-existing `.env`
+  without that key gets it appended once, before migrations run. A host that
+  already sets `CACHE_STORE` (file, redis, anything) is left alone.
+
 ## [v1.4.6] - 2026-09-14
 
 - **laravel-vps-deploy: a pre-existing `.env` gets the super admin identity
