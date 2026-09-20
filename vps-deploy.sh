@@ -186,7 +186,9 @@ backup_db() {
                 || echo "  WARN: pg_dump backup failed (check credentials)"
         fi
     fi
-    ls -1t "$BACKUPS"/pre-"$1"-* 2>/dev/null | tail -n +6 | xargs -r rm -f
+    # A first deploy with an empty database has nothing to back up and nothing to
+    # prune; under pipefail the empty glob would otherwise end the deploy here.
+    ls -1t "$BACKUPS"/pre-"$1"-* 2>/dev/null | tail -n +6 | xargs -r rm -f || true
 }
 
 if [ "$FRESH" = "true" ]; then
@@ -338,5 +340,5 @@ if [ "$WORKER_STATE" = "missing" ]; then
 fi
 
 # --- Prune old releases (keep last 5) -------------------------------------
-ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf
+ls -1dt "$RELEASES"/*/ 2>/dev/null | tail -n +6 | xargs -r rm -rf || true
 echo "vps-deploy.sh: activated $APP @ $REL"

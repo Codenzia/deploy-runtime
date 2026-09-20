@@ -3,6 +3,11 @@
 All notable changes to the reusable workflows and host scripts in this repo.
 Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
+## [1.4.9] - 2026-09-20
+
+### Fixed
+- `vps-deploy.sh`: a first deploy with an empty database exited with code 2 in the backup prune (`ls` on an empty glob under `pipefail`). Both prune pipelines now tolerate an empty match.
+
 ## [Unreleased]
 
 ## [v1.4.8] - 2026-09-20
