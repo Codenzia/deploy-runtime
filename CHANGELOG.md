@@ -5,6 +5,18 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.8] - 2026-09-20
+
+- **The last `actions/checkout@v4` and the two `ubuntu-latest` runners are
+  gone.** GitHub now runs v4-era actions on a forced Node 24 shim and annotates
+  every job that uses one, and the `ubuntu-latest` label migrates to Ubuntu 26
+  on 19 October 2026. `psr4-check.yml` was still on `actions/checkout@v4`; it
+  and `release-plugin.yml` were the only two reusable workflows left on
+  `ubuntu-latest`, and because the runner label lives in the *called* workflow,
+  no caller could pin it for itself. Both now pin `ubuntu-24.04`, and the
+  checkout is `@v6`, matching the deploy workflows. No inputs, outputs or
+  behaviour changed — callers only need to move their pin to `@v1.4.8`.
+
 ## [v1.4.7] - 2026-09-18
 
 - **laravel-vps-deploy: the cache leaves the SQLite file.** The seeded `.env`
