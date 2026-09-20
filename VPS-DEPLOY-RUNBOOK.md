@@ -46,6 +46,30 @@ Then the per-site host prep below, set repo secrets, and Run workflow.
 4. (MySQL targets only) **create a DB + user**; put the credentials in
    `shared/.env` (`DB_HOST=127.0.0.1`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`).
 
+### A½. CloudPanel Laravel template gotchas (nginx vhost + Let's Encrypt)
+CloudPanel's stock "Laravel" vhost template (any major) needs three root-side
+fixes for a Livewire/Filament app; `gsblab/deploy/host-setup.sh` applies all
+three idempotently (backup, edit, `nginx -t`, reload, restore on failure) and
+is the reference for the next lab.
+1. **Livewire script 404 (8080 backend).** The port-8080 `server {}` carries a
+   static-extension `location ~* ^.+\.(css|js|…)$` block with no fallback, so
+   `/livewire-<hash>/livewire.min.js` (a PHP route, not a file) is 404'd by
+   nginx and no Filament form wires up. Delete that block from the 8080 server
+   only; the fleet template `templates/cloudpanel-vhost-laravel.conf` has none there.
+2. **Static assets that are PHP routes (443 front).** The 443 static block must
+   end with `try_files $uri @laravel;` and a `location @laravel { … }` with the
+   same proxy settings as `location /` must follow it (the fleet template fix).
+3. **Let's Encrypt validation 404.** CloudPanel writes the ACME challenge into
+   the root stored in its own DB (`htdocs/<domain>/public`), not the nginx
+   `root` you pointed at `current/public`. Replace the panel's placeholder
+   directory (only its Hello-World `index.php`) with a relative symlink
+   `public -> current/public` owned by the site user **before** requesting the
+   certificate. The panel also installs a self-signed placeholder `.crt` at site
+   creation, so check the issuer (`openssl x509 -noout -issuer -in
+   /etc/nginx/ssl-certificates/<domain>.crt`; issuer CN = the domain means
+   self-signed) rather than the file's existence before skipping the request.
+Editing the vhost in the CloudPanel UI re-renders the template and undoes 1-2.
+
 ### B. SSH access for the deploy
 Append the deploy public key to **each site user's** `authorized_keys`
 (one `VPS_SSH_KEY`, authorized on every site user):
