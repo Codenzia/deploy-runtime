@@ -5,6 +5,11 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.10] - 2026-09-23
+
+### Fixed
+- The artifact rsync excluded every `*.map` file, which also dropped Livewire's `dist/livewire.min.js.map` from `vendor`. Livewire still registers the route that serves that map, and its handler calls `filemtime()` on the missing file, so every browser with dev tools open produced a logged `ErrorException` and a 500 on the map request. All three deploy workflows now exclude maps under `/public` only; vendor keeps its files.
+
 ## [v1.4.9] - 2026-09-20
 
 ### Fixed

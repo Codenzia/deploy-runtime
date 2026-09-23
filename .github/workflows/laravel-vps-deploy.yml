@@ -221,7 +221,7 @@ jobs:
             --exclude='.git' --exclude='.github' --exclude='.vscode' --exclude='.idea' \
             --exclude='.claude' --exclude='.agents' --exclude='.gemini' \
             --exclude='node_modules' --exclude='/tests' --exclude='/docs' \
-            --exclude='public/hot' --exclude='*.log' --exclude='*.sqlite' --exclude='*.map' \
+            --exclude='public/hot' --exclude='*.log' --exclude='*.sqlite' --exclude='/public/**.map' \
             --exclude='.env' --exclude='.env.*' \
             --exclude='storage/logs/*' --exclude='storage/framework/cache/data/*' --exclude='storage/framework/sessions/*' \
             --exclude='_artifact' \

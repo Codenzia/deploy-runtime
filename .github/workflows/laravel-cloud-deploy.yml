@@ -304,7 +304,7 @@ jobs:
             --exclude='public/hot' \
             --exclude='*.log' \
             --exclude='*.sqlite' \
-            --exclude='*.map' \
+            --exclude='/public/**.map' \
             --exclude='.env' \
             --exclude='.env.*' \
             --exclude='storage/logs/*' \
