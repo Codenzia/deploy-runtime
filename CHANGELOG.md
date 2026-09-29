@@ -5,6 +5,11 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.11] - 2026-09-29
+
+### Added
+- All three deploy workflows now write a `VERSION` file at the app root, in the same step as `build.json`: line 1 is `git describe --tags --always` of the deployed commit (the short sha when no tag is reachable), line 2 is `built: <UTC deploy time>`, the same timestamp as `deployed_at`. Apps that report their release from a `VERSION` file or `git describe` showed their seeded default on the host, because `.git` never ships. A `VERSION` the repo ships itself is kept. The app checkout is now full-history and treeless (`fetch-depth: 0`, `filter: tree:0`) so the tag is reachable. No new inputs; callers only move their pin to `@v1.4.11`.
+
 ## [v1.4.10] - 2026-09-23
 
 ### Fixed

@@ -204,3 +204,21 @@ never secrets, so an accidentally exposed doc root leaks nothing sensitive.
 `base_path('build.json')` and renders `Build #<run_number> · <short sha> ·
 <branch> · <deployed_at> · <target>` in its Version Info widget. The file is
 absent in local development and the widget simply omits the row.
+
+### `VERSION` (since v1.4.11)
+
+The same step writes a plain `VERSION` file next to `build.json`, for apps
+that report their own release (an About page) and would otherwise ask `git
+describe` — which the deployed tree cannot answer, since `.git` never ships:
+
+```text
+v1.2.0-3-g560f78b
+built: 2026-09-29T15:04:37Z
+```
+
+Line 1 is `git describe --tags --always` of the deployed commit (the short sha
+when no tag is reachable), line 2 the same UTC timestamp as `deployed_at`. The
+app checkout is full-history but treeless (`fetch-depth: 0`, `filter:
+tree:0`) so the tag is reachable at little cost. A `VERSION` the repo ships
+itself is left untouched. Like `build.json` it is in every artifact, so the
+`--delete` sync never removes it and it needs no protect filter.

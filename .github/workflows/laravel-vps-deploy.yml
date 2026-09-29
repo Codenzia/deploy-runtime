@@ -119,6 +119,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: app
+          # Full history without file contents, so `git describe --tags` in
+          # the build stamp can reach the latest release tag.
+          fetch-depth: 0
+          filter: tree:0
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -239,6 +243,7 @@ jobs:
         working-directory: app${{ inputs.source_dir != '' && format('/{0}', inputs.source_dir) || '' }}
         run: |
           set -euo pipefail
+          DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
             --arg commit "$GITHUB_SHA" \
             --arg commit_short "${GITHUB_SHA:0:7}" \
@@ -250,10 +255,20 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --arg target "" \
             --arg domain "$DOMAIN" \
-            --arg deployed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg deployed_at "$DEPLOYED_AT" \
             '{commit:$commit,commit_short:$commit_short,ref:$ref,branch:$branch,run_number:$run_number,run_id:$run_id,workflow:$workflow,repository:$repository,target:$target,domain:$domain,deployed_at:$deployed_at}' \
             > _artifact/build.json
           cat _artifact/build.json
+          # VERSION: the release the code itself reports (e.g. an About page)
+          # when the install has no .git. Line 1 = git describe of the deployed
+          # commit (the short sha when no tag is reachable), line 2 = deploy
+          # time. A VERSION the repo ships is its own record and is kept.
+          if [ -e _artifact/VERSION ]; then
+            echo "VERSION shipped by the repo, kept as is"
+          else
+            printf '%s\nbuilt: %s\n' "$(git describe --tags --always 2>/dev/null || echo "${GITHUB_SHA:0:7}")" "$DEPLOYED_AT" > _artifact/VERSION
+          fi
+          cat _artifact/VERSION
 
       - name: Load SSH key
         uses: webfactory/ssh-agent@v0.10.0
