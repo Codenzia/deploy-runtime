@@ -54,8 +54,19 @@ on:
 
 jobs:
   release:
+    # Publishing to the public mirror (and through it Packagist) is owner-click
+    # only: the caller must be started by workflow_dispatch ("Release to
+    # public"). A caller wired to a tag push or any other event is refused here,
+    # so a pushed tag can never reach the public repo. Tag pushes reach Satis
+    # through the -dev repo's own satis-on-tag.yml.
     runs-on: ubuntu-24.04
     steps:
+      - name: Require a manual run
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        run: |
+          echo "::error::release-plugin.yml publishes to the public mirror and only runs from workflow_dispatch (got '${{ github.event_name }}'). Press 'Release to public' in the -dev repo's Actions tab."
+          exit 1
+
       - name: Squash-release -dev -> public
         env:
           GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
@@ -222,7 +233,7 @@ jobs:
         # classic repo-scoped PAT can POST a repository_dispatch to Codenzia/satis.
         # Non-fatal: the nightly cron rebuild is the safety net, so a transient
         # dispatch failure must never fail an otherwise-successful release.
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
         run: |
@@ -258,7 +269,7 @@ jobs:
         # immediately instead of racing the ~6-min FTPS deploy. Uses CODENZIA_PAT
         # (no extra secret; queries the satis run rather than the auth-gated
         # catalog). Non-fatal: a timeout just falls back to the nightly rebuild.
-        if: always()
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ secrets.CODENZIA_PAT }}
         run: |

@@ -5,6 +5,11 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.12] - 2026-10-13
+
+### Changed
+- `release-plugin.yml` ("Release to public") now refuses to run unless the caller was started by `workflow_dispatch`. Public mirroring and Packagist are owner-click only; a caller wired to a tag push fails at the first step instead of mirroring. The Satis notify and wait steps are skipped on such a refused run. Callers on `workflow_dispatch` need no edit beyond the ref.
+
 ## [v1.4.11] - 2026-09-29
 
 ### Added
