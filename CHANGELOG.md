@@ -5,6 +5,9 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Fixed
+- `vps-worker-setup.sh`: on a site user with no crontab yet, `crontab -l` exits 1 and, under `set -e`, aborted the subshell before the scheduler line was echoed. The script installed an EMPTY crontab and exited before the "done" banner. The read now tolerates a missing crontab.
+
 ## [v1.4.12] - 2026-10-13
 
 ### Changed

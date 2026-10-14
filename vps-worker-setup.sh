@@ -75,7 +75,10 @@ CRON_LINE="* * * * * cd ${SITE_DIR}/current && ${PHP_BIN} artisan schedule:run >
 if crontab -u "$SITE_USER" -l 2>/dev/null | grep -Fq "artisan schedule:run"; then
     echo "→ scheduler cron already present for $SITE_USER"
 else
-    ( crontab -u "$SITE_USER" -l 2>/dev/null; echo "$CRON_LINE" ) | crontab -u "$SITE_USER" -
+    # `crontab -l` exits 1 when the user has no crontab yet; under set -e that
+    # aborted the subshell before the echo, so an EMPTY crontab was installed
+    # and the script died here.
+    { crontab -u "$SITE_USER" -l 2>/dev/null || true; echo "$CRON_LINE"; } | crontab -u "$SITE_USER" -
     echo "→ installed scheduler cron for $SITE_USER"
 fi
 
