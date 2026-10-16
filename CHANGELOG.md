@@ -5,6 +5,11 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.13] - 2026-10-16
+
+### Added
+- `laravel-vps-deploy.yml` runs `php artisan queue:restart` as the last activation step. A supervisor-managed `queue:work` kept the previous release's code in memory for up to its `--max-time` (one hour on the fleet's workers), so jobs dispatched by the new code ran on the old code. `queue:restart` only writes a timestamp to the cache, so it is safe on a host with no worker, and a failure never fails the deploy. No new inputs; callers only move their pin to `@v1.4.13`. (`vps-deploy.sh` already did this.)
+
 ### Fixed
 - `vps-worker-setup.sh`: on a site user with no crontab yet, `crontab -l` exits 1 and, under `set -e`, aborted the subshell before the scheduler line was echoed. The script installed an EMPTY crontab and exited before the "done" banner. The read now tolerates a missing crontab.
 

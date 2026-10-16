@@ -484,6 +484,12 @@ jobs:
           php artisan route:cache || true
           php artisan view:cache || true
           php artisan event:cache || true
+
+          # A long-lived queue:work keeps the previous release's code in memory
+          # until it exits. queue:restart only writes a timestamp to the cache;
+          # each worker exits after its current job and supervisor starts it on
+          # the new code. Harmless on a host with no worker.
+          php artisan queue:restart || true
           EOF
 
       - name: Smoke test
