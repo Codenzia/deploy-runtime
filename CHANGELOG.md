@@ -5,6 +5,12 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.4.14] - 2026-10-21
+
+### Fixed
+- `laravel-vps-deploy`: a `fresh: true` deploy no longer runs `php artisan migrate` before `migrate:fresh`. On a host with an older database that in-place migrate could fail (migrations folded into their create files) and abort a deploy whose next step dropped every table anyway. Non-fresh deploys still migrate in place.
+
+
 ## [v1.4.13] - 2026-10-16
 
 ### Added

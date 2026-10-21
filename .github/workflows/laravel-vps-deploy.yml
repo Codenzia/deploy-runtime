@@ -463,12 +463,16 @@ jobs:
             echo "Backfilled CACHE_STORE=file into .env"
           fi
 
-          # Refresh caches + run migrations.
+          # Refresh caches + run migrations. A fresh deploy drops every table, so
+          # it skips the in-place migrate: on an old database that step can fail on
+          # migrations folded into their create files, and its result is discarded
+          # anyway.
           php artisan optimize:clear || true
-          php artisan migrate --force
 
           if [ "${FRESH}" = "true" ]; then
             php artisan migrate:fresh --seed --seeder="${DEMO_SEEDER}" --force
+          else
+            php artisan migrate --force
           fi
 
           # Re-assert the protected super admin from .env after every migrate/seed:
