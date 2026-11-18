@@ -5,6 +5,9 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Changed
+- `vps-deploy.sh`: a `FRESH=true` deploy now stops before touching the database unless the pre-reset dump was written and reads back whole (`gzip -t` plus the dump tool's completion trailer). On a host whose `.env` has `APP_ENV=production` or `SANAD_DRIVER=real` it is also refused unless the site user first creates `htdocs/<domain>/.deploy/allow-fresh`, which the deploy deletes on use. Pre-deploy dumps are written mode 600 in a mode-700 `shared/backups`. Normal deploys still only warn when the dump fails.
+
 ## [v1.4.14] - 2026-10-21
 
 ### Fixed

@@ -6,7 +6,10 @@
 #   DOMAIN   full domain, e.g. task-off.com
 #   REL      release id (timestamp-sha)
 #   DB       "sqlite" (default) or "mysql" — sets DB_CONNECTION in shared/.env
-#   FRESH    "true" to migrate:fresh + reseed (default "false")
+#   FRESH    "true" to migrate:fresh + reseed (default "false"). Refused
+#            without a verified backup, and on a host whose .env has
+#            APP_ENV=production or SANAD_DRIVER=real unless the one-shot
+#            flag file .deploy/allow-fresh exists.
 #   SEEDER   seeder class for FRESH path (default "DatabaseSeeder")
 #   ALWAYS_SEED  "true" to also run the (idempotent) seeder on the NORMAL
 #                (non-FRESH) path every deploy (default "false")
@@ -153,26 +156,40 @@ cd "$R"
 
 # --- Migrate / reseed -----------------------------------------------------
 mkdir -p "$BACKUPS"
+chmod 700 "$BACKUPS" 2>/dev/null || true
+# Set by backup_db: the dump it wrote and whether that dump reads back whole.
+BACKUP_FILE=""
+BACKUP_OK="false"
 backup_db() {
     local stamp; stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    if [ "$DB" = "sqlite" ] && [ -s "$DB_FILE" ]; then
-        gzip -c "$DB_FILE" > "$BACKUPS/pre-$1-$stamp.sqlite.gz"
-        echo "  backup → $BACKUPS/pre-$1-$stamp.sqlite.gz"
+    # Dumps hold every plaintext column; only the site user may read them.
+    local old_umask; old_umask="$(umask)"; umask 077
+    BACKUP_FILE=""; BACKUP_OK="false"
+    if [ "$DB" = "sqlite" ]; then
+        if [ -s "$DB_FILE" ]; then
+            BACKUP_FILE="$BACKUPS/pre-$1-$stamp.sqlite.gz"
+            gzip -c "$DB_FILE" > "$BACKUP_FILE" && gzip -t "$BACKUP_FILE" && BACKUP_OK="true"
+        else
+            # No database file yet: nothing exists that a reset could destroy.
+            BACKUP_OK="true"
+        fi
     elif [ "$DB" = "mysql" ]; then
-        # Best-effort logical dump using the app's own .env credentials.
         local host db user pass
         host="$(grep -E '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)"
         db="$(grep -E '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)"
         user="$(grep -E '^DB_USERNAME=' "$ENV_FILE" | cut -d= -f2-)"
         pass="$(grep -E '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
         if command -v mysqldump >/dev/null 2>&1 && [ -n "$db" ]; then
-            MYSQL_PWD="$pass" mysqldump -h"${host:-127.0.0.1}" -u"$user" "$db" 2>/dev/null \
-                | gzip -c > "$BACKUPS/pre-$1-$stamp.sql.gz" \
-                && echo "  backup → $BACKUPS/pre-$1-$stamp.sql.gz" \
-                || echo "  WARN: mysqldump backup failed (check credentials)"
+            BACKUP_FILE="$BACKUPS/pre-$1-$stamp.sql.gz"
+            if MYSQL_PWD="$pass" mysqldump -h"${host:-127.0.0.1}" -u"$user" "$db" 2>/dev/null | gzip -c > "$BACKUP_FILE" \
+                && gzip -t "$BACKUP_FILE" \
+                && gzip -dc "$BACKUP_FILE" | tail -n 1 | grep -q 'Dump completed'; then
+                BACKUP_OK="true"
+            fi
+        else
+            echo "  WARN: mysqldump unavailable or DB_DATABASE empty — no backup taken"
         fi
     elif [ "$DB" = "pgsql" ]; then
-        # Best-effort logical dump using the app's own .env credentials.
         local host port db user pass
         host="$(grep -E '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)"
         port="$(grep -E '^DB_PORT=' "$ENV_FILE" | cut -d= -f2-)"
@@ -180,11 +197,23 @@ backup_db() {
         user="$(grep -E '^DB_USERNAME=' "$ENV_FILE" | cut -d= -f2-)"
         pass="$(grep -E '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)"
         if command -v pg_dump >/dev/null 2>&1 && [ -n "$db" ]; then
-            PGPASSWORD="$pass" pg_dump -h "${host:-127.0.0.1}" -p "${port:-5432}" -U "$user" "$db" 2>/dev/null \
-                | gzip -c > "$BACKUPS/pre-$1-$stamp.sql.gz" \
-                && echo "  backup → $BACKUPS/pre-$1-$stamp.sql.gz" \
-                || echo "  WARN: pg_dump backup failed (check credentials)"
+            BACKUP_FILE="$BACKUPS/pre-$1-$stamp.sql.gz"
+            # pg_dump writes this trailer only after every table was dumped.
+            if PGPASSWORD="$pass" pg_dump -h "${host:-127.0.0.1}" -p "${port:-5432}" -U "$user" "$db" 2>/dev/null | gzip -c > "$BACKUP_FILE" \
+                && gzip -t "$BACKUP_FILE" \
+                && gzip -dc "$BACKUP_FILE" | tail -n 5 | grep -q 'PostgreSQL database dump complete'; then
+                BACKUP_OK="true"
+            fi
+        else
+            echo "  WARN: pg_dump unavailable or DB_DATABASE empty — no backup taken"
         fi
+    fi
+    umask "$old_umask"
+    if [ "$BACKUP_OK" = "true" ] && [ -n "$BACKUP_FILE" ]; then
+        echo "  backup → $BACKUP_FILE (verified)"
+    elif [ "$BACKUP_OK" != "true" ]; then
+        echo "  WARN: backup failed or could not be verified${BACKUP_FILE:+ ($BACKUP_FILE)}"
+        if [ -n "$BACKUP_FILE" ]; then rm -f "$BACKUP_FILE"; fi
     fi
     # A first deploy with an empty database has nothing to back up and nothing to
     # prune; under pipefail the empty glob would otherwise end the deploy here.
@@ -192,8 +221,25 @@ backup_db() {
 }
 
 if [ "$FRESH" = "true" ]; then
+    # A reset is irreversible. On a production host (or one holding real
+    # identities under another APP_ENV) it needs an operator-placed flag file,
+    # consumed on use, so a dispatched workflow alone can never wipe it.
+    ENV_NOW="$(grep -E '^APP_ENV=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\042\047' || true)"
+    REAL_IDENTITY="$(grep -E '^SANAD_DRIVER=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\042\047' || true)"
+    FRESH_FLAG="$SITE_DIR/.deploy/allow-fresh"
+    if [ "$ENV_NOW" = "production" ] || [ "$REAL_IDENTITY" = "real" ]; then
+        if [ ! -f "$FRESH_FLAG" ]; then
+            echo "FATAL: FRESH refused — APP_ENV=$ENV_NOW SANAD_DRIVER=${REAL_IDENTITY:-unset}. To allow one reset, create $FRESH_FLAG on the host as the site user." >&2
+            exit 1
+        fi
+        rm -f "$FRESH_FLAG"
+    fi
     echo "FRESH=true → backup then migrate:fresh + db:seed --class=$SEEDER"
     backup_db fresh
+    if [ "$BACKUP_OK" != "true" ]; then
+        echo "FATAL: FRESH refused — no verified backup of the current database; nothing was changed." >&2
+        exit 1
+    fi
     "$PHP_BIN" artisan migrate:fresh --force
     "$PHP_BIN" artisan db:seed --class="$SEEDER" --force
 else
