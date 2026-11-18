@@ -103,6 +103,11 @@ on:
         required: false
         type: string
         default: ""
+      app_ref:
+        description: "App commit to deploy. A workflow_run caller passes github.event.workflow_run.head_sha so the commit CI tested is the one shipped; empty uses the triggering ref."
+        required: false
+        type: string
+        default: ""
       runtime_ref:
         description: "deploy-runtime ref for the host scripts; set it to the same tag as the uses: line. Empty uses the commit this workflow was loaded from."
         required: false
@@ -140,10 +145,15 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: app
+          ref: ${{ inputs.app_ref }}
           # Full history without file contents, so `git describe --tags` in
           # the build stamp can reach the latest release tag.
           fetch-depth: 0
           filter: tree:0
+
+      - name: Record the deployed app commit
+        working-directory: app
+        run: echo "DEPLOY_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       # The host scripts must come from the same commit as this workflow file:
       # without a ref the checkout takes deploy-runtime's default branch, so a
@@ -295,8 +305,8 @@ jobs:
           set -euo pipefail
           DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           jq -n \
-            --arg commit "$GITHUB_SHA" \
-            --arg commit_short "${GITHUB_SHA:0:7}" \
+            --arg commit "$DEPLOY_SHA" \
+            --arg commit_short "${DEPLOY_SHA:0:7}" \
             --arg ref "$GITHUB_REF" \
             --arg branch "$GITHUB_REF_NAME" \
             --arg run_number "$GITHUB_RUN_NUMBER" \
@@ -316,7 +326,7 @@ jobs:
           if [ -e _artifact/VERSION ]; then
             echo "VERSION shipped by the repo, kept as is"
           else
-            printf '%s\nbuilt: %s\n' "$(git describe --tags --always 2>/dev/null || echo "${GITHUB_SHA:0:7}")" "$DEPLOYED_AT" > _artifact/VERSION
+            printf '%s\nbuilt: %s\n' "$(git describe --tags --always 2>/dev/null || echo "${DEPLOY_SHA:0:7}")" "$DEPLOYED_AT" > _artifact/VERSION
           fi
           cat _artifact/VERSION
 
@@ -388,7 +398,7 @@ jobs:
 
       - name: Compute release id
         working-directory: ${{ github.workspace }}
-        run: echo "REL=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+        run: echo "REL=$(date -u +%Y%m%dT%H%M%SZ)-${DEPLOY_SHA:0:7}" >> "$GITHUB_ENV"
 
       - name: Upload host scripts + auto-provision (first deploy)
         working-directory: ${{ github.workspace }}

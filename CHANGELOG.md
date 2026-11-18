@@ -5,6 +5,9 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Added
+- `vps-deploy.yml`: `app_ref` input. A caller triggered by `workflow_run` passes `github.event.workflow_run.head_sha`, so the deploy ships the commit CI passed rather than whatever is at the head of the branch when the deploy starts. Empty keeps the old behaviour.
+
 ### Changed
 - `vps-deploy.yml`: the host scripts (`vps-provision.sh`, `vps-deploy.sh`, `vps-worker-setup.sh`) are checked out at the commit the reusable workflow itself was loaded from (`job.workflow_sha`), or at the new `runtime_ref` input, instead of deploy-runtime's default branch. A caller pinned to a tag now runs that tag's scripts. If neither is known the deploy fails before touching the host. Callers may pass `runtime_ref` with the same tag as their `uses:` line.
 - `laravel-cloud-deploy.yml`: the host's `~/codenzia/deploy-runtime` clone is moved (detached) to the workflow's own commit on every deploy instead of `git pull` to the head of `main`; when that commit is unknown the clone is left where it is.
