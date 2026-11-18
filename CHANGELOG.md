@@ -5,6 +5,9 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Security
+- Every action in the workflows is pinned by commit SHA (tag in a trailing comment) instead of a movable tag, and the three deploy workflows declare `permissions: contents: read` for their job token. The actions that see the SSH key and CODENZIA_PAT can no longer change under a pinned release.
+
 ### Added
 - `vps-rollback.sh`, uploaded to `.deploy/` with the other host scripts: points `current` back at the previous release (or a named one), restarts workers, reloads php-fpm and flushes Varnish where allowed. Code only; applied migrations stay, so migrations must stay additive (expand now, contract in a later release).
 - `vps-deploy.yml`: `smoke_fatal` and `health_path` inputs. With `smoke_fatal: true` the deploy fails when the health URL does not answer 2xx in three tries, and the error names the rollback command. Default stays a warning.
