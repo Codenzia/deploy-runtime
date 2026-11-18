@@ -5,6 +5,10 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Added
+- `vps-rollback.sh`, uploaded to `.deploy/` with the other host scripts: points `current` back at the previous release (or a named one), restarts workers, reloads php-fpm and flushes Varnish where allowed. Code only; applied migrations stay, so migrations must stay additive (expand now, contract in a later release).
+- `vps-deploy.yml`: `smoke_fatal` and `health_path` inputs. With `smoke_fatal: true` the deploy fails when the health URL does not answer 2xx in three tries, and the error names the rollback command. Default stays a warning.
+
 ### Fixed
 - `vps-worker-setup.sh`: the worker and the scheduler cron run the absolute PHP binary (resolved from the PHP_BIN argument), so a minimal cron PATH can no longer pick another PHP version. An existing scheduler line with another binary or path is replaced instead of being left as it was. The script refuses a PHP without `pdo_pgsql` for a site whose `.env` has `DB_CONNECTION=pgsql`. Re-run it as root on each site to correct an old cron line.
 

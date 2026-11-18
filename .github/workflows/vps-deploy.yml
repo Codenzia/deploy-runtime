@@ -108,6 +108,16 @@ on:
         required: false
         type: string
         default: ""
+      smoke_fatal:
+        description: "Fail the deploy when the health URL does not answer 2xx after activation (roll back with .deploy/vps-rollback.sh)"
+        required: false
+        type: boolean
+        default: false
+      health_path:
+        description: "Health URL path checked after activation"
+        required: false
+        type: string
+        default: "/up"
       runtime_ref:
         description: "deploy-runtime ref for the host scripts; set it to the same tag as the uses: line. Empty uses the commit this workflow was loaded from."
         required: false
@@ -415,7 +425,7 @@ jobs:
 
           # Push the current host scripts (single source of truth = this checkout).
           retry ssh -p "$PORT" "$DEST" "mkdir -p \"${SITE_DIR}/.deploy\""
-          retry scp -P "$PORT" deploy-runtime/vps-provision.sh deploy-runtime/vps-deploy.sh deploy-runtime/vps-worker-setup.sh \
+          retry scp -P "$PORT" deploy-runtime/vps-provision.sh deploy-runtime/vps-deploy.sh deploy-runtime/vps-worker-setup.sh deploy-runtime/vps-rollback.sh \
             "${DEST}:${SITE_DIR}/.deploy/"
           retry ssh -p "$PORT" "$DEST" "chmod 0750 \"${SITE_DIR}/.deploy/\"*.sh"
 
@@ -478,6 +488,8 @@ jobs:
       - name: Smoke test
         working-directory: ${{ github.workspace }}
         env:
+          SMOKE_FATAL: ${{ inputs.smoke_fatal }}
+          HEALTH_PATH: ${{ inputs.health_path }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
         run: |
@@ -486,8 +498,18 @@ jobs:
           ssh -p "$PORT" "$DEST" \
             "test -f \"htdocs/${DOMAIN}/current/public/index.php\" \
              && test -L \"htdocs/${DOMAIN}/current/.env\""
-          curl -fsS -o /dev/null -w "HTTP %{http_code}\n" "https://${DOMAIN}/up" \
-            || echo "warning: /up smoke failed (TLS/DNS/doc-root may not be ready yet)"
+          URL="https://${DOMAIN}${HEALTH_PATH}"
+          for attempt in 1 2 3; do
+            if curl -fsS --max-time 20 -o /dev/null -w "HTTP %{http_code}\n" "$URL"; then
+              exit 0
+            fi
+            [ "$attempt" -lt 3 ] && sleep 10
+          done
+          if [ "$SMOKE_FATAL" = "true" ]; then
+            echo "::error::${URL} did not answer 2xx after activation. The new release is live; roll back on the host with: bash htdocs/${DOMAIN}/.deploy/vps-rollback.sh ${DOMAIN}"
+            exit 1
+          fi
+          echo "warning: ${HEALTH_PATH} smoke failed (TLS/DNS/doc-root may not be ready yet)"
 
       - name: Livewire asset health check
         working-directory: ${{ github.workspace }}
