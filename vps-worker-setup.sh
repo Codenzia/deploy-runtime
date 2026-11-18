@@ -36,6 +36,21 @@ if [ ! -e "$SITE_DIR/current" ]; then
     exit 1
 fi
 
+# cron and supervisor run with a minimal PATH, where a bare `php` can resolve to
+# a different version than the one the site was built for. Pin the absolute
+# binary, and refuse one that cannot reach the site's database driver.
+PHP_ABS="$(command -v "$PHP_BIN" 2>/dev/null || true)"
+if [ -z "$PHP_ABS" ]; then
+    echo "FATAL: PHP binary '$PHP_BIN' not found on this host." >&2
+    exit 1
+fi
+PHP_BIN="$PHP_ABS"
+DB_DRIVER="$(grep -E '^DB_CONNECTION=' "$SITE_DIR/shared/.env" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d '\042\047' || true)"
+if [ "$DB_DRIVER" = "pgsql" ] && ! "$PHP_BIN" -m 2>/dev/null | grep -qx 'pdo_pgsql'; then
+    echo "FATAL: $PHP_BIN has no pdo_pgsql, but $DOMAIN uses PostgreSQL. Install the extension for this PHP version first." >&2
+    exit 1
+fi
+
 # 1. supervisor — install once per box (no-op if already present).
 if ! command -v supervisorctl >/dev/null 2>&1; then
     echo "→ installing supervisor"
@@ -72,14 +87,15 @@ supervisorctl restart "${APP}-worker" 2>/dev/null || supervisorctl start "${APP}
 
 # 3. Laravel scheduler cron for the site user (idempotent).
 CRON_LINE="* * * * * cd ${SITE_DIR}/current && ${PHP_BIN} artisan schedule:run >> ${SITE_DIR}/shared/storage/logs/schedule.log 2>&1"
-if crontab -u "$SITE_USER" -l 2>/dev/null | grep -Fq "artisan schedule:run"; then
+if crontab -u "$SITE_USER" -l 2>/dev/null | grep -Fxq "$CRON_LINE"; then
     echo "→ scheduler cron already present for $SITE_USER"
 else
-    # `crontab -l` exits 1 when the user has no crontab yet; under set -e that
-    # aborted the subshell before the echo, so an EMPTY crontab was installed
-    # and the script died here.
-    { crontab -u "$SITE_USER" -l 2>/dev/null || true; echo "$CRON_LINE"; } | crontab -u "$SITE_USER" -
-    echo "→ installed scheduler cron for $SITE_USER"
+    # Any older scheduler line (another PHP binary, another path) is replaced,
+    # not kept beside the new one. `crontab -l` exits 1 when the user has no
+    # crontab yet; under set -e that aborted the subshell before the echo, so
+    # an EMPTY crontab was installed and the script died here.
+    { crontab -u "$SITE_USER" -l 2>/dev/null | grep -Fv "artisan schedule:run" || true; echo "$CRON_LINE"; } | crontab -u "$SITE_USER" -
+    echo "→ installed scheduler cron for $SITE_USER: $CRON_LINE"
 fi
 
 echo

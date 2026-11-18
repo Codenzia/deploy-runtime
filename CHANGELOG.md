@@ -5,6 +5,9 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+### Fixed
+- `vps-worker-setup.sh`: the worker and the scheduler cron run the absolute PHP binary (resolved from the PHP_BIN argument), so a minimal cron PATH can no longer pick another PHP version. An existing scheduler line with another binary or path is replaced instead of being left as it was. The script refuses a PHP without `pdo_pgsql` for a site whose `.env` has `DB_CONNECTION=pgsql`. Re-run it as root on each site to correct an old cron line.
+
 ### Added
 - `vps-deploy.yml`: `app_ref` input. A caller triggered by `workflow_run` passes `github.event.workflow_run.head_sha`, so the deploy ships the commit CI passed rather than whatever is at the head of the branch when the deploy starts. Empty keeps the old behaviour.
 
