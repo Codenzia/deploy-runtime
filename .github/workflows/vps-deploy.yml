@@ -103,6 +103,11 @@ on:
         required: false
         type: string
         default: ""
+      runtime_ref:
+        description: "deploy-runtime ref for the host scripts; set it to the same tag as the uses: line. Empty uses the commit this workflow was loaded from."
+        required: false
+        type: string
+        default: ""
     secrets:
       CODENZIA_PAT:
         required: false
@@ -140,10 +145,27 @@ jobs:
           fetch-depth: 0
           filter: tree:0
 
+      # The host scripts must come from the same commit as this workflow file:
+      # without a ref the checkout takes deploy-runtime's default branch, so a
+      # caller pinned to a tag would still run whatever is on main.
+      - name: Resolve deploy-runtime ref
+        id: runtime
+        env:
+          RUNTIME_REF: ${{ inputs.runtime_ref != '' && inputs.runtime_ref || job.workflow_sha }}
+        run: |
+          if [ -z "$RUNTIME_REF" ]; then
+            echo "::error::Cannot tell which deploy-runtime commit this workflow came from. Pass runtime_ref with the same tag as the uses: line."
+            exit 1
+          fi
+          echo "ref=$RUNTIME_REF" >> "$GITHUB_OUTPUT"
+          echo "deploy-runtime host scripts @ $RUNTIME_REF"
+        working-directory: .
+
       - name: Checkout deploy-runtime (host scripts)
         uses: actions/checkout@v6
         with:
           repository: Codenzia/deploy-runtime
+          ref: ${{ steps.runtime.outputs.ref }}
           path: deploy-runtime
           token: ${{ secrets.CODENZIA_PAT }}
 

@@ -6,6 +6,8 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 ## [Unreleased]
 
 ### Changed
+- `vps-deploy.yml`: the host scripts (`vps-provision.sh`, `vps-deploy.sh`, `vps-worker-setup.sh`) are checked out at the commit the reusable workflow itself was loaded from (`job.workflow_sha`), or at the new `runtime_ref` input, instead of deploy-runtime's default branch. A caller pinned to a tag now runs that tag's scripts. If neither is known the deploy fails before touching the host. Callers may pass `runtime_ref` with the same tag as their `uses:` line.
+- `laravel-cloud-deploy.yml`: the host's `~/codenzia/deploy-runtime` clone is moved (detached) to the workflow's own commit on every deploy instead of `git pull` to the head of `main`; when that commit is unknown the clone is left where it is.
 - `vps-deploy.sh`: a `FRESH=true` deploy now stops before touching the database unless the pre-reset dump was written and reads back whole (`gzip -t` plus the dump tool's completion trailer). On a host whose `.env` has `APP_ENV=production` or `SANAD_DRIVER=real` it is also refused unless the site user first creates `htdocs/<domain>/.deploy/allow-fresh`, which the deploy deletes on use. Pre-deploy dumps are written mode 600 in a mode-700 `shared/backups`. Normal deploys still only warn when the dump fails.
 
 ## [v1.4.14] - 2026-10-21

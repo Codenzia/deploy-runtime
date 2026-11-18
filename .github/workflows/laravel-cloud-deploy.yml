@@ -424,6 +424,9 @@ jobs:
           HOST_USER: ${{ secrets.HOST_USER }}
           HOST_HOSTNAME: ${{ secrets.HOST_HOSTNAME }}
           HOST_PORT: ${{ secrets.HOST_PORT }}
+          # The host clone is moved to the commit this workflow file came from,
+          # never to the head of main, so a caller's tag pin covers deploy.sh too.
+          RUNTIME_SHA: ${{ job.workflow_sha }}
         working-directory: ${{ github.workspace }}
         run: |
           # Build the remote script locally so $DOMAIN and $APP_NAME resolve
@@ -440,10 +443,16 @@ jobs:
               exit 1
             fi
 
-            # Keep the host's deploy-runtime clone current so fixes to deploy.sh
-            # propagate on EVERY deploy, not just first provision.
+            # Pin the host's deploy-runtime clone to this workflow's own commit
+            # on EVERY deploy, so deploy.sh changes arrive only with a new tag.
             if [ -d "\$RUNTIME/.git" ]; then
-              git -C "\$RUNTIME" pull --ff-only --quiet || echo "warn: could not fast-forward \$RUNTIME"
+              if [ -n "${RUNTIME_SHA}" ]; then
+                git -C "\$RUNTIME" fetch --quiet origin \
+                  && git -C "\$RUNTIME" checkout --quiet --detach "${RUNTIME_SHA}" \
+                  || { echo "FATAL: could not move \$RUNTIME to ${RUNTIME_SHA}" >&2; exit 1; }
+              else
+                echo "warn: workflow commit unknown; leaving \$RUNTIME where it is"
+              fi
             fi
 
             if [ -x "\${APPS}/deploy.sh" ]; then
