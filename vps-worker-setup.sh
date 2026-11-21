@@ -13,6 +13,14 @@
 #   sudo bash vps-worker-setup.sh APP DOMAIN SITE_USER [PHP_BIN]
 # Example:
 #   sudo bash vps-worker-setup.sh dari dari.codenzia.com codenzia-dari php8.3
+#
+# Optional environment, defaults unchanged for every app that sets none:
+#   WORKER_PROCS    supervisor numprocs (default 1)
+#   WORKER_TIMEOUT  queue:work --timeout in seconds; keep it below the queue
+#                   connection's retry_after, or a slow job is handed to a
+#                   second worker while the first still runs (default: unset,
+#                   Laravel's 60)
+#   WORKER_QUEUES   queue:work --queue list, highest priority first (default: unset)
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -29,6 +37,13 @@ DOMAIN="$2"
 SITE_USER="$3"
 PHP_BIN="${4:-php8.3}"
 SITE_DIR="/home/$SITE_USER/htdocs/$DOMAIN"
+WORKER_PROCS="${WORKER_PROCS:-1}"
+WORKER_ARGS=""
+[ -n "${WORKER_TIMEOUT:-}" ] && WORKER_ARGS="$WORKER_ARGS --timeout=${WORKER_TIMEOUT}"
+[ -n "${WORKER_QUEUES:-}" ] && WORKER_ARGS="$WORKER_ARGS --queue=${WORKER_QUEUES}"
+# Supervisor needs a per-process name once there is more than one.
+PROCESS_NAME=""
+[ "$WORKER_PROCS" -gt 1 ] && PROCESS_NAME="process_name=%(program_name)s_%(process_num)02d"
 LOG_DIR="$SITE_DIR/shared/storage/logs"
 
 if [ ! -e "$SITE_DIR/current" ]; then
@@ -67,9 +82,10 @@ systemctl enable --now supervisor
 CONF="/etc/supervisor/conf.d/${APP}-worker.conf"
 cat > "$CONF" <<EOF
 [program:${APP}-worker]
-command=${PHP_BIN} ${SITE_DIR}/current/artisan queue:work --sleep=1 --tries=3 --max-time=3600
+command=${PHP_BIN} ${SITE_DIR}/current/artisan queue:work --sleep=1 --tries=3 --max-time=3600${WORKER_ARGS}
 user=${SITE_USER}
-numprocs=1
+numprocs=${WORKER_PROCS}
+${PROCESS_NAME}
 autostart=true
 autorestart=true
 redirect_stderr=true
