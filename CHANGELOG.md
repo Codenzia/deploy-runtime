@@ -5,6 +5,14 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.5.0] - 2026-11-21
+
+Released from the `preprod-ops` branch, not from `main`: workflows on older tags fetch their host scripts from `main`, so `main` stays as it was until each app moves to this tag on purpose. From this tag on, a workflow runs the host scripts of its own commit.
+
+### Added
+- `vps-worker-setup.sh`: `WORKER_PROCS`, `WORKER_TIMEOUT` and `WORKER_QUEUES` set the number of worker processes, the job timeout and the queue list per app. Defaults are unchanged for an app that sets none.
+
+
 ### Security
 - Every action in the workflows is pinned by commit SHA (tag in a trailing comment) instead of a movable tag, and the three deploy workflows declare `permissions: contents: read` for their job token. The actions that see the SSH key and CODENZIA_PAT can no longer change under a pinned release.
 
