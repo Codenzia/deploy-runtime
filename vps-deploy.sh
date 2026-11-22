@@ -8,7 +8,8 @@
 #   DB       "sqlite" (default) or "mysql" — sets DB_CONNECTION in shared/.env
 #   FRESH    "true" to migrate:fresh + reseed (default "false"). Refused
 #            without a verified backup, and on a host whose .env has
-#            APP_ENV=production or SANAD_DRIVER=real unless the one-shot
+#            APP_ENV=production, SANAD_DRIVER=real or SANAD_AUTH_DRIVER=real
+#            unless the one-shot
 #            flag file .deploy/allow-fresh exists.
 #   SEEDER   seeder class for FRESH path (default "DatabaseSeeder")
 #   ALWAYS_SEED  "true" to also run the (idempotent) seeder on the NORMAL
@@ -225,11 +226,13 @@ if [ "$FRESH" = "true" ]; then
     # identities under another APP_ENV) it needs an operator-placed flag file,
     # consumed on use, so a dispatched workflow alone can never wipe it.
     ENV_NOW="$(grep -E '^APP_ENV=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\042\047' || true)"
-    REAL_IDENTITY="$(grep -E '^SANAD_DRIVER=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '\042\047' || true)"
+    # Either setting marks a host that holds real identities: the integration
+    # driver (SANAD_DRIVER) or the sign-in driver (SANAD_AUTH_DRIVER).
+    REAL_IDENTITY="$(grep -E '^SANAD_(AUTH_)?DRIVER=' "$ENV_FILE" | cut -d= -f2- | tr -d '\042\047\r' | grep -x 'real' | head -n1 || true)"
     FRESH_FLAG="$SITE_DIR/.deploy/allow-fresh"
     if [ "$ENV_NOW" = "production" ] || [ "$REAL_IDENTITY" = "real" ]; then
         if [ ! -f "$FRESH_FLAG" ]; then
-            echo "FATAL: FRESH refused — APP_ENV=$ENV_NOW SANAD_DRIVER=${REAL_IDENTITY:-unset}. To allow one reset, create $FRESH_FLAG on the host as the site user." >&2
+            echo "FATAL: FRESH refused — APP_ENV=$ENV_NOW, real Sanad driver: ${REAL_IDENTITY:-no}. To allow one reset, create $FRESH_FLAG on the host as the site user." >&2
             exit 1
         fi
         rm -f "$FRESH_FLAG"

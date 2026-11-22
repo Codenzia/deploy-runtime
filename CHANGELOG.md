@@ -5,6 +5,11 @@ Consumers must pin an immutable `vX.Y.Z` tag — never `@main`.
 
 ## [Unreleased]
 
+## [v1.5.1] - 2026-11-22
+
+### Fixed
+- `vps-deploy.sh`: the refusal of a `FRESH=true` deploy on a host with real identities also reads `SANAD_AUTH_DRIVER=real` (the sign-in driver), not only `SANAD_DRIVER=real`.
+
 ## [v1.5.0] - 2026-11-21
 
 Released from the `preprod-ops` branch, not from `main`: workflows on older tags fetch their host scripts from `main`, so `main` stays as it was until each app moves to this tag on purpose. From this tag on, a workflow runs the host scripts of its own commit.
